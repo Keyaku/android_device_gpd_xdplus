@@ -64,7 +64,9 @@ TARGET_LD_SHIM_LIBS := \
     /vendor/lib/hw/android.hardware.audio@2.0-impl-mediatek.so|libshim_audio.so \
     /vendor/lib64/hw/android.hardware.audio@2.0-impl-mediatek.so|libshim_audio.so \
     /vendor/lib/hw/android.hardware.audio.effect@2.0-impl.so|libshim_audio.so \
-    /vendor/lib64/hw/android.hardware.audio.effect@2.0-impl.so|libshim_audio.so
+    /vendor/lib64/hw/android.hardware.audio.effect@2.0-impl.so|libshim_audio.so \
+    /vendor/bin/hw/android.hardware.broadcastradio@1.1-service|libshim_logbase.so \
+    /vendor/bin/hw/android.hardware.broadcastradio@1.1-service|libshim_broadcastradio.so
 
 # Platform
 TARGET_BOARD_PLATFORM := mt8173

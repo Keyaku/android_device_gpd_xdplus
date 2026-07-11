@@ -50,3 +50,12 @@ cc_library_shared {
 	],
 	shared_libs: ["libutils"],
 }
+
+// broadcastradio V1_0/V1_1 toString/operator== + sp<> stack-pointer guard
+// no-op for the vendor broadcastradio HAL (see shim_broadcastradio_tostring.cpp).
+cc_library_shared {
+	name: "libshim_broadcastradio",
+	compile_multilib: "64",
+	srcs: ["shim_broadcastradio_tostring.cpp"],
+	shared_libs: ["libhidlbase", "libutils"],
+}
