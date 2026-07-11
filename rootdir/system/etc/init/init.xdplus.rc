@@ -1,5 +1,19 @@
 # xdplus system-side init additions.
 
+# Seed /data/misc/wifi/{wpa,p2p}_supplicant.conf on a fresh /data. This port's
+# init only creates the dir; nothing recreates the templates wpa_supplicant is
+# launched with, so a factory reset otherwise leaves Wi-Fi permanently unable to
+# start supplicant (PORTING_LOG §33). Copy-if-missing, root, once, at post-fs-data.
+service xdplus-wifiseed /system/bin/sh /system/etc/xdplus_wifi_seed.sh
+    class main
+    user root
+    group wifi system
+    disabled
+    oneshot
+
+on post-fs-data
+    start xdplus-wifiseed
+
 # The prebuilt 8.1 vendor configstore service SIGSYS-crashes on its stale
 # seccomp policy and restart-loops forever (log noise, wasted cycles). The
 # system-side android.hardware.configstore@1.1-service.xdplus replaces it
