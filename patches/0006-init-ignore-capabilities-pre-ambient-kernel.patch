@@ -1,0 +1,23 @@
+diff --git a/init/service_parser.cpp b/init/service_parser.cpp
+index bdac077..1828174 100644
+--- a/init/service_parser.cpp
++++ b/init/service_parser.cpp
+@@ -54,8 +54,16 @@ Result<void> ServiceParser::ParseCapabilities(std::vector<std::string>&& args) {
+     service_->capabilities_ = 0;
+ 
+     if (!CapAmbientSupported()) {
+-        return Error()
+-               << "capabilities requested but the kernel does not support ambient capabilities";
++        // xdplus (3.18 kernel, no ambient caps): the error below is tolerated
++        // per-line by the parser, but capabilities_ has already been set to an
++        // EMPTY capset above — so the service would exec with zero caps (netd
++        // then can't even socket(): EACCES from the paranoid-network kernel,
++        // killing all connectivity). Pre-ambient kernels can't honor the caps
++        // line at all; ignore it and keep the service's full/default caps.
++        service_->capabilities_.reset();
++        LOG(WARNING) << "ignoring 'capabilities' for service '" << service_->name()
++                     << "': kernel does not support ambient capabilities";
++        return {};
+     }
+ 
+     unsigned int last_valid_cap = GetLastValidCap();

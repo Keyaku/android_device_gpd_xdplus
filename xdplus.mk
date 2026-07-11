@@ -84,7 +84,7 @@ PRODUCT_PACKAGES += com.android.vndk.current
 PRODUCT_PACKAGES += libhwbinder libhidltransport
 
 # CallStack shim for vendor graphics blobs (see shims/Android.bp + TARGET_LD_SHIM_LIBS)
-PRODUCT_PACKAGES += libshim_callstack libshim_logbase libshim_audio
+PRODUCT_PACKAGES += libshim_callstack libshim_logbase libshim_audio libshim_wifi
 
 # Legacy system-side health@2.0 ("backup" instance) — the 8.1 vendor has no
 # health HAL and BatteryService crashes system_server without one. Reference
@@ -101,6 +101,9 @@ PRODUCT_PACKAGES += android.hardware.keymaster@4.1-service.xdplus android.hardwa
 # ISurfaceFlingerConfigs; MTK GED in every app RenderThread blocks forever
 # waiting for it → windows never draw (splash forever, mCurrentFocus=null).
 PRODUCT_PACKAGES += android.hardware.configstore@1.1-service.xdplus
+
+# Stub dumpstate HAL (no vendor impl; hung getService ANRed Developer options)
+PRODUCT_PACKAGES += android.hardware.dumpstate@1.1-service.xdplus
 
 # Old HIDL libs the vendor audio HAL links against (not installed by default in R)
 PRODUCT_PACKAGES += android.hardware.soundtrigger@2.0 android.hardware.audio.common@2.0-util libaudioroute libaudiospdif

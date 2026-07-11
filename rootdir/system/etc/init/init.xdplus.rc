@@ -6,3 +6,11 @@
 # (see device configstore/), so stop the vendor copy once boot completes.
 on property:sys.boot_completed=1
     stop configstore-hal-1-0
+
+# Vendor HAL services started from the 8.1 vendor rc can lose the boot race
+# against hwservicemanager: the process stays alive but its interface never
+# registers, and (VINTF unenforced) clients block forever in getService().
+# Seen with configstore (replaced above) and light@2.0 (system_server thread
+# hung on ILight). Kick the known victims once the manager is ready.
+on property:hwservicemanager.ready=true
+    restart light-hal-2-0
