@@ -51,7 +51,11 @@ PRODUCT_COPY_FILES += \
 PRODUCT_COPY_FILES += \
      $(LOCAL_PATH)/configs/agps_profiles_conf2.xml:system/etc/agps_profiles_conf2.xml \
 
-# Audio	
+# System-side init additions (stop the crash-looping vendor configstore)
+PRODUCT_COPY_FILES += \
+    $(LOCAL_PATH)/rootdir/system/etc/init/init.xdplus.rc:system/etc/init/init.xdplus.rc
+
+# Audio
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/rootdir/system/etc/media_profiles.xml:system/etc/media_profiles.xml \
     $(LOCAL_PATH)/rootdir/system/etc/media_codecs.xml:system/etc/media_codecs.xml \
@@ -91,6 +95,12 @@ PRODUCT_PACKAGES += healthd
 # Vendor's keymaster@3.0/gatekeeper HALs are unloadable; these let keystore and
 # gatekeeperd come up so system_server stops NPE-crashing on a null keystore.
 PRODUCT_PACKAGES += android.hardware.keymaster@4.1-service.xdplus android.hardware.gatekeeper@1.0-service.software.xdplus
+
+# System-side configstore@1.1 (see configstore/service.cpp): vendor's 8.1
+# configstore SIGSYS-loops on its stale seccomp policy and never registers
+# ISurfaceFlingerConfigs; MTK GED in every app RenderThread blocks forever
+# waiting for it → windows never draw (splash forever, mCurrentFocus=null).
+PRODUCT_PACKAGES += android.hardware.configstore@1.1-service.xdplus
 
 # Old HIDL libs the vendor audio HAL links against (not installed by default in R)
 PRODUCT_PACKAGES += android.hardware.soundtrigger@2.0 android.hardware.audio.common@2.0-util libaudioroute libaudiospdif

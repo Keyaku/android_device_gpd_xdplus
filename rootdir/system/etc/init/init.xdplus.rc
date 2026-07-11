@@ -1,0 +1,8 @@
+# xdplus system-side init additions.
+
+# The prebuilt 8.1 vendor configstore service SIGSYS-crashes on its stale
+# seccomp policy and restart-loops forever (log noise, wasted cycles). The
+# system-side android.hardware.configstore@1.1-service.xdplus replaces it
+# (see device configstore/), so stop the vendor copy once boot completes.
+on property:sys.boot_completed=1
+    stop configstore-hal-1-0
