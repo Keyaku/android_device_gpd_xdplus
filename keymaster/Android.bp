@@ -76,6 +76,40 @@ cc_binary {
 	],
 }
 
+// Binderized gatekeeper@1.0 service backed by the MT8173 TEE. hw_get_module
+// ("gatekeeper")s the trustlet HAL gatekeeper.mt8173.so (loadable since
+// libtz_uree.so was restored, §29; enroll/verify proven by the §31 spike) and
+// wraps it with the AOSP passthrough adapter (gk_tee_adapter.*). Registers as
+// IGatekeeper/default so gatekeeperd's HardwareAuthToken shares the trustlet
+// root of trust with the §30 HW keymaster — fixes the -26 PIN regression.
+// Falls back to the software gatekeeper if the trustlet won't open.
+cc_binary {
+	name: "android.hardware.gatekeeper@1.0-service.xdplus",
+	stem: "android.hardware.gatekeeper@1.0-service.xdplus",
+	defaults: ["hidl_defaults"],
+	system_ext_specific: true,
+	relative_install_path: "hw",
+	init_rc: ["gk_tee.rc"],
+	vintf_fragments: ["gk10.xml"],
+	srcs: [
+		"gk_tee_service.cpp",
+		"gk_tee_adapter.cpp",
+		"SoftGateKeeperDevice.cpp",
+	],
+	shared_libs: [
+		"android.hardware.gatekeeper@1.0",
+		"libbase",
+		"libhardware",
+		"libhidlbase",
+		"libutils",
+		"liblog",
+		"libdl",
+		"libcrypto",
+		"libgatekeeper",
+	],
+	static_libs: ["libscrypt_static"],
+}
+
 cc_binary {
 	name: "android.hardware.gatekeeper@1.0-service.software.xdplus",
 	stem: "android.hardware.gatekeeper@1.0-service.software.xdplus",
