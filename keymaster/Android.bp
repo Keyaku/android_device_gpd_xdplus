@@ -1,0 +1,56 @@
+// System_ext software keymaster@4.1 + gatekeeper@1.0 services. The prebuilt 8.1
+// vendor's keymaster@3.0/gatekeeper HALs can't load (keymaster@3.0-impl needs an
+// O-era SoftKeymasterContext symbol nothing in R provides; gatekeeper needs the
+// absent libtz_uree.so). Without a working keystore, system_server NPEs all over
+// (TrustManager, LockdownVpnTracker, ...). These AOSP software impls run on the
+// framework side and let keystore/gatekeeperd come up. Sources copied verbatim
+// from hardware/interfaces/{keymaster/4.1/default,gatekeeper/1.0/software}.
+
+cc_binary {
+	name: "android.hardware.keymaster@4.1-service.xdplus",
+	stem: "android.hardware.keymaster@4.1-service.xdplus",
+	defaults: ["hidl_defaults"],
+	system_ext_specific: true,
+	relative_install_path: "hw",
+	init_rc: ["km41.rc"],
+	vintf_fragments: ["km41.xml"],
+	srcs: ["km_service.cpp"],
+	shared_libs: [
+		"android.hardware.keymaster@4.0",
+		"android.hardware.keymaster@4.1",
+		"libbase",
+		"libcutils",
+		"libhardware",
+		"libhidlbase",
+		"libkeymaster4",
+		"libkeymaster41",
+		"libkeymaster4_1support",
+		"liblog",
+		"libutils",
+	],
+}
+
+cc_binary {
+	name: "android.hardware.gatekeeper@1.0-service.software.xdplus",
+	stem: "android.hardware.gatekeeper@1.0-service.software.xdplus",
+	defaults: ["hidl_defaults"],
+	system_ext_specific: true,
+	relative_install_path: "hw",
+	init_rc: ["gk10.rc"],
+	vintf_fragments: ["gk10.xml"],
+	srcs: [
+		"gk_service.cpp",
+		"SoftGateKeeperDevice.cpp",
+	],
+	shared_libs: [
+		"android.hardware.gatekeeper@1.0",
+		"libbase",
+		"libhardware",
+		"libhidlbase",
+		"libutils",
+		"liblog",
+		"libcrypto",
+		"libgatekeeper",
+	],
+	static_libs: ["libscrypt_static"],
+}

@@ -1,0 +1,40 @@
+// Shim exposing android::CallStack to the prebuilt 8.1 vendor blobs
+// (gralloc.mt8173.so, hwcomposer.mt8173.so). Android 11 moved CallStack out of
+// libutils into libutilscallstack; the blobs still expect it from libutils.
+// Injected via TARGET_LD_SHIM_LIBS (see BoardConfig.mk).
+// audio::V2_0::toString(Result) for vendor audio blobs (see shim_audio_tostring.cpp).
+cc_library_shared {
+	name: "libshim_audio",
+	compile_multilib: "both",
+	srcs: [
+		"shim_audio_tostring.cpp",
+		"shim_audio_hidlutils.cpp",
+		"shim_audio_config.cpp",
+	],
+	shared_libs: [
+		"android.hardware.audio.common@2.0-util",
+		"android.hardware.audio.common@2.0",
+		"libhidlbase",
+		"libutils",
+	],
+}
+
+// O-era libbase LogMessage ctor trampolines (see shim_logbase.cpp).
+cc_library_shared {
+	name: "libshim_logbase",
+	compile_multilib: "both",
+	srcs: ["shim_logbase.cpp"],
+	shared_libs: ["libbase"],
+}
+
+cc_library_shared {
+	name: "libshim_callstack",
+	compile_multilib: "both",
+	whole_static_libs: ["libutilscallstack"],
+	shared_libs: [
+		"libutils",
+		"libbacktrace",
+		"liblog",
+	],
+	system_ext_specific: false,
+}

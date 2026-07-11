@@ -1,0 +1,4 @@
+service gkxdplus-1-0 /system_ext/bin/hw/android.hardware.gatekeeper@1.0-service.software.xdplus
+    class early_hal
+    user system
+    group system

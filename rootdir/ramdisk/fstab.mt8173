@@ -1,0 +1,6 @@
+# First-stage init fstab (boot ramdisk). Android 11 two-stage init mounts these
+# before switching root into the system-as-root image. Block paths use the
+# soc/11230000.mmc naming this kernel generates (proven in last_kmsg), NOT the
+# mtk-msdc.0/11230000.MSDC0 naming used by the (different) recovery kernel.
+/dev/block/platform/soc/11230000.mmc/by-name/system   /system   ext4   ro   wait,first_stage_mount
+/dev/block/platform/soc/11230000.mmc/by-name/vendor   /vendor   ext4   ro   wait,first_stage_mount

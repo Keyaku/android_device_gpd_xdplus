@@ -1,0 +1,26 @@
+// System-installed copy of the generic soundtrigger@2.0 passthrough impl
+// (FetchISoundTriggerHw.cpp verbatim from hardware/interfaces/soundtrigger/2.0/default).
+// The 8.1 vendor has NO soundtrigger module at all, but the MTK audio HAL
+// service exits when ISoundTriggerHw registration fails, taking its device/
+// effects factory registrations down with it. This impl registers fine (the
+// hw module is only loaded lazily) so the service stays alive. The passthrough
+// loader also searches /system/lib/hw, hence system install works.
+cc_library_shared {
+	name: "android.hardware.soundtrigger@2.0-impl-xdplus",
+	stem: "android.hardware.soundtrigger@2.0-impl",
+	relative_install_path: "hw",
+	compile_multilib: "both",
+	srcs: ["FetchISoundTriggerHw.cpp"],
+	shared_libs: [
+		"libhidlbase",
+		"liblog",
+		"libutils",
+		"libhardware",
+		"android.hardware.soundtrigger@2.0",
+		"android.hardware.soundtrigger@2.0-core",
+	],
+	header_libs: [
+		"libaudio_system_headers",
+		"libhardware_headers",
+	],
+}
