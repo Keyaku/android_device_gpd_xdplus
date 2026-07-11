@@ -1,0 +1,17 @@
+diff --git a/logd/main.cpp b/logd/main.cpp
+index acf9a07..77b6da8 100644
+--- a/logd/main.cpp
++++ b/logd/main.cpp
+@@ -103,8 +103,10 @@ static int DropPrivs(bool klogd, bool auditd) {
+         }
+     }
+     if (cap_set_proc(caps.get()) < 0) {
+-        android::prdebug("failed to set CAP_SYSLOG or CAP_AUDIT_CONTROL (%d)", errno);
+-        return -1;
++        // Kernels without ambient capabilities (< 4.3) leave us with an empty
++        // permitted set after init's setuid, so this always fails there. Not
++        // fatal: /proc/kmsg is passed in as an fd by init ("file" rc option).
++        android::prdebug("failed to set CAP_SYSLOG or CAP_AUDIT_CONTROL (%d), continuing", errno);
+     }
+ 
+     return 0;

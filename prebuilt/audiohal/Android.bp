@@ -1,0 +1,30 @@
+// libaudiohal with @2.0 client support, extracted from a reference
+// LOS 18.1 system (phh-style re-add of the 2.0 audio HAL client dropped in Q).
+// The MTK binderized audio@2.0 service can't run (its -impl blob needs O-era
+// HidlUtils manglings nothing in R provides); this loader lets audioserver
+// drive the vendor audio.primary HAL through the 2.0 client path instead.
+// prefer: true overrides the source-built libaudiohal (4.0+ only).
+
+cc_prebuilt_library_shared {
+	name: "libaudiohal",
+	prefer: true,
+	compile_multilib: "both",
+	arch: {
+		arm: { srcs: ["lib/libaudiohal.so"] },
+		arm64: { srcs: ["lib64/libaudiohal.so"] },
+	},
+	shared_libs: ["libaudiohal@2.0"],
+	strip: { none: true },
+	check_elf_files: false,
+}
+
+cc_prebuilt_library_shared {
+	name: "libaudiohal@2.0",
+	compile_multilib: "both",
+	arch: {
+		arm: { srcs: ["lib/libaudiohal@2.0.so"] },
+		arm64: { srcs: ["lib64/libaudiohal@2.0.so"] },
+	},
+	strip: { none: true },
+	check_elf_files: false,
+}

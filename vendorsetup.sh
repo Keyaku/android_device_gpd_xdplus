@@ -1,0 +1,2 @@
+add_lunch_combo lineage_xdplus-userdebug
+add_lunch_combo lineage_xdplus-eng
