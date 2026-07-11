@@ -1,0 +1,32 @@
+diff --git a/services/core/java/com/android/server/policy/WindowOrientationListener.java b/services/core/java/com/android/server/policy/WindowOrientationListener.java
+index 34867ade..0b4d8d67 100644
+--- a/services/core/java/com/android/server/policy/WindowOrientationListener.java
++++ b/services/core/java/com/android/server/policy/WindowOrientationListener.java
+@@ -558,6 +558,14 @@ public abstract class WindowOrientationListener {
+         // Whether we are locked into an overhead usage mode.
+         private boolean mOverhead;
+ 
++        // Rotation to propose while the device rests flat (screen up), or -1 to
++        // keep the stock behavior of proposing nothing. Devices whose
++        // accelerometer sits in a base that lies flat during normal use (e.g.
++        // clamshell handhelds on a table) set persist.sys.flat_rotation to the
++        // rotation that matches that pose.
++        private final int mFlatRotation =
++                SystemProperties.getInt("persist.sys.flat_rotation", -1);
++
+         // History of observed tilt angles.
+         private static final int TILT_HISTORY_SIZE = 200;
+         private float[] mTiltHistory = new float[TILT_HISTORY_SIZE];
+@@ -788,6 +796,12 @@ public abstract class WindowOrientationListener {
+                 if (mPredictedRotation < 0 || isPredictedRotationAcceptableLocked(now)) {
+                     mProposedRotation = mPredictedRotation;
+                 }
++                if (mFlatRotation >= 0 && isFlat && !isAccelerating && !mTouched) {
++                    // Resting flat is a deliberate pose on this device; fall
++                    // back to the configured rotation instead of keeping
++                    // whatever was proposed last.
++                    mProposedRotation = mFlatRotation;
++                }
+                 proposedRotation = mProposedRotation;
+ 
+                 // Write final statistics about where we are in the orientation detection process.

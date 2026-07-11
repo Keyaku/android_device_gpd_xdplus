@@ -296,4 +296,9 @@
          don't support RIL_REQUEST_GET_RADIO_CAPABILITY
          format is UMTS|LTE|... -->
     <string translatable="false" name="config_radio_access_family">GSM|WCDMA</string>
+
+    <!-- Clamshell: let the lockscreen rotate. Allowed auto-rotate angles come
+         from the LOS per-user setting accelerometer_rotation_angles (7 =
+         0/90/180; seascape excluded per user preference). -->
+    <bool name="config_enableLockScreenRotation">true</bool>
 </resources>

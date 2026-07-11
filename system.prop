@@ -75,3 +75,4 @@ bgw.current3gband=0
 ro.sf.hwrotation=180
 ril.radiooff.poweroffMD=0
 
+persist.sys.flat_rotation=1
