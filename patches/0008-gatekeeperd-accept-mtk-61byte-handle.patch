@@ -1,0 +1,36 @@
+diff --git a/gatekeeperd/gatekeeperd.cpp b/gatekeeperd/gatekeeperd.cpp
+index 1d65b1c..03b102a 100644
+--- a/gatekeeperd/gatekeeperd.cpp
++++ b/gatekeeperd/gatekeeperd.cpp
+@@ -185,7 +185,12 @@ public:
+         android::hardware::hidl_vec<uint8_t> curPwd;
+ 
+         if (currentPasswordHandle && currentPassword) {
+-            if (currentPasswordHandle->size() != sizeof(gatekeeper::password_handle_t)) {
++            // xdplus: the MT8173 TEE gatekeeper trustlet returns a 61-byte
++            // password handle vs AOSP's 58-byte password_handle_t. gatekeeperd
++            // only reads the leading version+user_id (offset 0..8, well inside
++            // 61) and otherwise treats the handle opaquely, so accept anything
++            // at least struct-sized and reject only truncated handles.
++            if (currentPasswordHandle->size() < sizeof(gatekeeper::password_handle_t)) {
+                 LOG(INFO) << "Password handle has wrong length";
+                 return GK_ERROR;
+             }
+@@ -216,7 +221,7 @@ public:
+         }
+ 
+         if (gkResponse->response_code() == GKResponseCode::OK && !gkResponse->should_reenroll()) {
+-            if (gkResponse->payload().size() != sizeof(gatekeeper::password_handle_t)) {
++            if (gkResponse->payload().size() < sizeof(gatekeeper::password_handle_t)) {
+                 LOG(ERROR) << "HAL returned password handle of invalid length "
+                            << gkResponse->payload().size();
+                 return GK_ERROR;
+@@ -261,7 +266,7 @@ public:
+ 
+         if (!hw_device) return GK_ERROR;
+ 
+-        if (enrolledPasswordHandle.size() != sizeof(gatekeeper::password_handle_t)) {
++        if (enrolledPasswordHandle.size() < sizeof(gatekeeper::password_handle_t)) {
+             LOG(INFO) << "Password handle has wrong length";
+             return GK_ERROR;
+         }

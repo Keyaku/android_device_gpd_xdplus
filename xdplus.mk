@@ -97,8 +97,12 @@ PRODUCT_PACKAGES += healthd
 #   keystore.mt8173.so via the now-loadable vendor impl; PORTING_LOG §29+§30).
 #   Provides the real TRUSTED_ENVIRONMENT keymaster for FBE.
 # - keymaster@4.1-service.xdplus: software fallback (SOFTWARE slot / legacy keys).
-# - gatekeeper@1.0 software: TEE gatekeeper still needs the absent libgatekeeper_mtee.
-PRODUCT_PACKAGES += android.hardware.keymaster@3.0-service.xdplus android.hardware.keymaster@4.1-service.xdplus android.hardware.gatekeeper@1.0-service.software.xdplus
+# - gatekeeper@1.0-service.xdplus: binderized, TEE-backed (wraps trustlet HAL
+#   gatekeeper.mt8173.so; §31 spike proved enroll/verify with no libgatekeeper_mtee).
+#   Shares the trustlet root of trust with the HW keymaster so HardwareAuthTokens
+#   are accepted — fixes the §30 -26 KEY_USER_NOT_AUTHENTICATED PIN regression.
+#   Falls back to software gatekeeper internally if the trustlet won't open.
+PRODUCT_PACKAGES += android.hardware.keymaster@3.0-service.xdplus android.hardware.keymaster@4.1-service.xdplus android.hardware.gatekeeper@1.0-service.xdplus
 
 # System-side configstore@1.1 (see configstore/service.cpp): vendor's 8.1
 # configstore SIGSYS-loops on its stale seccomp policy and never registers
