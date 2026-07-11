@@ -109,6 +109,11 @@ PRODUCT_PACKAGES += android.hardware.dumpstate@1.1-service.xdplus
 # the vendor MTK codec plugin (libstagefrighthw) via OMXMaster.
 PRODUCT_PACKAGES += android.hardware.media.omx@1.0-service.xdplus
 
+# Vulkan driver symlinks into /system/lib{,64} (see vulkan/Android.mk):
+# non-Treble default namespace can't see /vendor/lib64/hw, loader dlopens
+# bare "vulkan.mt8173.so" → 0 physical devices without these.
+PRODUCT_PACKAGES += vulkan.mt8173_symlink64 vulkan.mt8173_symlink32
+
 # Old HIDL libs the vendor audio HAL links against (not installed by default in R)
 PRODUCT_PACKAGES += android.hardware.soundtrigger@2.0 android.hardware.audio.common@2.0-util libaudioroute libaudiospdif
 
