@@ -24,10 +24,10 @@ using android::hardware::keymaster::V4_0::SecurityLevel;
 
 int main() {
     ::android::hardware::configureRpcThreadpool(1, true /* willJoinThreadpool */);
-    // Report TRUSTED_ENVIRONMENT (not SOFTWARE) so keystore's initializeKeymasters()
-    // finds a TEE device and skips its keymaster@3.0 enumeration, which would
-    // otherwise CHECK-abort on the unloadable vendor keymaster@3.0 passthrough.
-    auto keymaster = ::keymaster::V4_1::CreateKeymasterDevice(SecurityLevel::TRUSTED_ENVIRONMENT);
+    // Report SOFTWARE: this is the legacy-key / fallback slot. The real hardware
+    // TRUSTED_ENVIRONMENT keymaster is now keymaster@3.0-service.xdplus (MT8173
+    // trustlet), enumerated as Keymaster3 by our patched keystore initializeKeymasters().
+    auto keymaster = ::keymaster::V4_1::CreateKeymasterDevice(SecurityLevel::SOFTWARE);
     auto status = keymaster->registerAsService();
     if (status != android::OK) {
         LOG(FATAL) << "Could not register service for Keymaster 4.1 (" << status << ")";

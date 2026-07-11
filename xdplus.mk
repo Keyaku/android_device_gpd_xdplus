@@ -92,10 +92,13 @@ PRODUCT_PACKAGES += libshim_callstack libshim_logbase libshim_audio libshim_wifi
 # system ships healthd + manifest_healthd.xml the same way.
 PRODUCT_PACKAGES += healthd
 
-# System_ext software keymaster@4.1 + gatekeeper@1.0 (see keymaster/Android.bp).
-# Vendor's keymaster@3.0/gatekeeper HALs are unloadable; these let keystore and
-# gatekeeperd come up so system_server stops NPE-crashing on a null keystore.
-PRODUCT_PACKAGES += android.hardware.keymaster@4.1-service.xdplus android.hardware.gatekeeper@1.0-service.software.xdplus
+# System_ext keymaster + gatekeeper (see keymaster/Android.bp).
+# - keymaster@3.0-service.xdplus: binderized, TEE-backed (wraps trustlet HAL
+#   keystore.mt8173.so via the now-loadable vendor impl; PORTING_LOG §29+§30).
+#   Provides the real TRUSTED_ENVIRONMENT keymaster for FBE.
+# - keymaster@4.1-service.xdplus: software fallback (SOFTWARE slot / legacy keys).
+# - gatekeeper@1.0 software: TEE gatekeeper still needs the absent libgatekeeper_mtee.
+PRODUCT_PACKAGES += android.hardware.keymaster@3.0-service.xdplus android.hardware.keymaster@4.1-service.xdplus android.hardware.gatekeeper@1.0-service.software.xdplus
 
 # System-side configstore@1.1 (see configstore/service.cpp): vendor's 8.1
 # configstore SIGSYS-loops on its stale seccomp policy and never registers
