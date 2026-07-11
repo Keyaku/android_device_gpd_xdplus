@@ -38,3 +38,15 @@ cc_library_shared {
 	],
 	system_ext_specific: false,
 }
+
+// wifi::V1_0::toString(sp<IWifiChipEventCallback>) for the vendor wifi HAL
+// service (see shim_wifi_tostring.cpp).
+cc_library_shared {
+	name: "libshim_wifi",
+	compile_multilib: "both",
+	srcs: [
+		"shim_wifi_tostring.cpp",
+		"shim_wifi_ipcthreadstate.cpp",
+	],
+	shared_libs: ["libutils"],
+}

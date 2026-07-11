@@ -1,0 +1,6 @@
+service dumpstate-hal-system /system/bin/hw/android.hardware.dumpstate@1.1-service.xdplus
+    interface android.hardware.dumpstate@1.0::IDumpstateDevice default
+    interface android.hardware.dumpstate@1.1::IDumpstateDevice default
+    class hal
+    user system
+    group system

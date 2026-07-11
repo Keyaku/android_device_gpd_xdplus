@@ -56,6 +56,8 @@ TARGET_LD_SHIM_LIBS := \
     /vendor/lib/libnvram.so|libshim_logbase.so \
     /vendor/lib64/hw/android.hardware.sensors@1.0-impl-mediatek.so|libshim_logbase.so \
     /vendor/bin/hw/android.hardware.wifi@1.0-service|libshim_logbase.so \
+    /vendor/bin/hw/android.hardware.wifi@1.0-service|libshim_wifi.so \
+    /vendor/bin/hw/wpa_supplicant|libshim_wifi.so \
     /vendor/bin/hw/android.hardware.drm@1.0-service.widevine|libshim_logbase.so \
     /vendor/lib/vendor.mediatek.hardware.audio@2.1_vendor.so|libshim_audio.so \
     /vendor/lib64/vendor.mediatek.hardware.audio@2.1_vendor.so|libshim_audio.so \

@@ -10,6 +10,8 @@ key 9     8
 key 10    9
 key 11    0
 key 158   BACK
+key 172   HOME
+key 580   APP_SWITCH
 key 230   SOFT_RIGHT
 key 60    SOFT_RIGHT
 key 107   ENDCALL
