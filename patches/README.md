@@ -10,6 +10,7 @@ Edits to upstream AOSP/LineageOS repos this port needs (can't live in the device
 | 0004 | `frameworks/base` | `KeyStore` null-`mBinder` guard — belt-and-suspenders against system_server NPE when keystore is unavailable. |
 | 0005 | `frameworks/base` | hwui `GLUtils::dumpGLErrors` non-fatal — old PowerVR driver leaves benign `GL_INVALID_ENUM` after frames; `GL_CHECKPOINT(LOW)` otherwise aborted every app RenderThread. |
 | 0006 | `system/core` | init: ignore `capabilities` rc lines on pre-ambient kernels — parser left an EMPTY capset behind, execing netd/wificond/logd with zero caps (netd socket() EACCES → no wifi/network). |
+| 0007 | `frameworks/base` | WindowOrientationListener: propose `persist.sys.flat_rotation` while device rests flat — accel is in the clamshell base, so on-table (normal gaming pose) reads flat and stock keeps last rotation. Prop unset/-1 = stock behavior. |
 
 Apply:
 
@@ -21,4 +22,5 @@ git -C system/security apply device/gpd/xdplus/patches/0003-*.patch
 git -C frameworks/base apply device/gpd/xdplus/patches/0004-*.patch
 git -C frameworks/base apply device/gpd/xdplus/patches/0005-*.patch
 git -C system/core apply device/gpd/xdplus/patches/0006-*.patch
+git -C frameworks/base apply device/gpd/xdplus/patches/0007-*.patch
 ```
