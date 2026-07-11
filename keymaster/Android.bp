@@ -30,6 +30,52 @@ cc_binary {
 	],
 }
 
+// Binderized keymaster@3.0 service backed by the MT8173 TEE. Passthrough-loads
+// the vendor android.hardware.keymaster@3.0-impl.so (now loadable — libtz_uree.so
+// restored, PORTING_LOG §29) which wraps the trustlet HAL keystore.mt8173.so.
+// keystore's support::Keymaster3 adapter presents it as a 4.x TRUSTED_ENVIRONMENT.
+cc_binary {
+	name: "android.hardware.keymaster@3.0-service.xdplus",
+	stem: "android.hardware.keymaster@3.0-service.xdplus",
+	defaults: ["hidl_defaults"],
+	system_ext_specific: true,
+	relative_install_path: "hw",
+	init_rc: ["km30.rc"],
+	// No vintf_fragment: the km@3.0/default HIDL declaration lives in the vendor
+	// manifest, patched from passthrough to hwbinder by keymaster/tee/install.sh.
+	// A duplicate framework decl would conflict at VINTF merge.
+	srcs: ["km30_service.cpp"],
+	shared_libs: [
+		"android.hardware.keymaster@3.0",
+		"libbase",
+		"libcutils",
+		"libdl",
+		"libhardware",
+		"libhidlbase",
+		"libkeymaster3device",
+		"liblog",
+		"libutils",
+	],
+}
+
+// Standalone TEE-reachability probe for the km@3.0 device (not shipped).
+cc_binary {
+	name: "km30_probe.xdplus",
+	stem: "km30_probe",
+	defaults: ["hidl_defaults"],
+	system_ext_specific: true,
+	srcs: ["km30_probe.cpp"],
+	shared_libs: [
+		"android.hardware.keymaster@3.0",
+		"libbase",
+		"libhardware",
+		"libhidlbase",
+		"libkeymaster3device",
+		"liblog",
+		"libutils",
+	],
+}
+
 cc_binary {
 	name: "android.hardware.gatekeeper@1.0-service.software.xdplus",
 	stem: "android.hardware.gatekeeper@1.0-service.software.xdplus",
