@@ -1,0 +1,21 @@
+// System-side OMX HAL replacing the unlinkable vendor one. See service.cpp.
+cc_binary {
+	name: "android.hardware.media.omx@1.0-service.xdplus",
+	relative_install_path: "hw",
+	// MTK per-codec libs (libMtkOmxVdecEx etc.) are 32-bit only in this vendor
+	compile_multilib: "32",
+	init_rc: ["android.hardware.media.omx@1.0-service.xdplus.rc"],
+	srcs: ["service.cpp"],
+	shared_libs: [
+		"libbinder",
+		"libutils",
+		"liblog",
+		"libbase",
+		"libcutils",
+		"libhidlbase",
+		"libstagefright_omx",
+		"libstagefright_xmlparser",
+		"android.hardware.media.omx@1.0",
+		"android.hidl.memory@1.0",
+	],
+}

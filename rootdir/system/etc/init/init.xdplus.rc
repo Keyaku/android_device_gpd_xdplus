@@ -6,6 +6,8 @@
 # (see device configstore/), so stop the vendor copy once boot completes.
 on property:sys.boot_completed=1
     stop configstore-hal-1-0
+    # vendor omx service is unlinkable (O-era ABI); system omx-hal-system replaces it
+    stop mediacodec
 
 # Vendor HAL services started from the 8.1 vendor rc can lose the boot race
 # against hwservicemanager: the process stays alive but its interface never

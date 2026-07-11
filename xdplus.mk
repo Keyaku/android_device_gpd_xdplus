@@ -105,6 +105,10 @@ PRODUCT_PACKAGES += android.hardware.configstore@1.1-service.xdplus
 # Stub dumpstate HAL (no vendor impl; hung getService ANRed Developer options)
 PRODUCT_PACKAGES += android.hardware.dumpstate@1.1-service.xdplus
 
+# System-side OMX HAL (vendor one unlinkable: O-era libstagefright ABI). Loads
+# the vendor MTK codec plugin (libstagefrighthw) via OMXMaster.
+PRODUCT_PACKAGES += android.hardware.media.omx@1.0-service.xdplus
+
 # Old HIDL libs the vendor audio HAL links against (not installed by default in R)
 PRODUCT_PACKAGES += android.hardware.soundtrigger@2.0 android.hardware.audio.common@2.0-util libaudioroute libaudiospdif
 

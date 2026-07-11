@@ -1,0 +1,7 @@
+service omx-hal-system /system/bin/hw/android.hardware.media.omx@1.0-service.xdplus
+    interface android.hardware.media.omx@1.0::IOmx default
+    interface android.hardware.media.omx@1.0::IOmxStore default
+    class main
+    user mediacodec
+    group camera drmrpc mediadrm
+    ioprio rt 4
