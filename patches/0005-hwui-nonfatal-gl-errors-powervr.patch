@@ -1,0 +1,18 @@
+diff --git a/libs/hwui/utils/GLUtils.cpp b/libs/hwui/utils/GLUtils.cpp
+index 61897627..1eeba5fd 100644
+--- a/libs/hwui/utils/GLUtils.cpp
++++ b/libs/hwui/utils/GLUtils.cpp
+@@ -46,7 +46,12 @@ bool GLUtils::dumpGLErrors() {
+                 ALOGE("GL error: 0x%x", status);
+         }
+     }
+-    return errorObserved;
++    // xdplus: the 8.1-era PowerVR GX6250 driver leaves a benign GL_INVALID_ENUM
++    // after some frames (Quickstep/launcher3); reporting it makes GL_CHECKPOINT(LOW)
++    // in SkiaOpenGLPipeline::swapBuffers LOG_ALWAYS_FATAL and kills every
++    // RenderThread. Log the errors (above) but never treat them as fatal here.
++    (void)errorObserved;
++    return false;
+ }
+ 
+ const char* GLUtils::getGLFramebufferError() {
