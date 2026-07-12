@@ -1,0 +1,18 @@
+diff --git a/init/subcontext.cpp b/init/subcontext.cpp
+index 9d4ea8c..16e0a1b 100644
+--- a/init/subcontext.cpp
++++ b/init/subcontext.cpp
+@@ -352,6 +357,13 @@ bool SubcontextChildReap(pid_t pid) {
+ 
+ void SubcontextTerminate() {
+     subcontext_terminated_by_shutdown = true;
++    // subcontext is never created on pre-P vendors (see InitializeSubcontext);
++    // without this guard init SIGSEGVs here during every reboot's powerctl
++    // handling, and its fatal-signal handler force-reboots to "bootloader"
++    // (fastboot) instead of completing the reboot. Matches SubcontextChildReap.
++    if (!subcontext) {
++        return;
++    }
+     kill(subcontext->pid(), SIGTERM);
+ }
+ 

@@ -13,7 +13,12 @@
 # limitations under the License.
 
 $(call inherit-product, $(SRC_TARGET_DIR)/product/languages_full.mk)
-$(call inherit-product, $(SRC_TARGET_DIR)/product/full_base_telephony.mk)
+# SIM-less tablet: full_base (non-telephony) instead of full_base_telephony.
+# Drops AOSP telephony.mk extras (Dialer, CarrierConfig, CarrierDefaultApp, ONS,
+# CallLogBackup, cellbroadcast apps). The framework telephony baseline
+# (Telecom/TeleService/TelephonyProvider from handheld_system) stays — SystemUI/
+# Settings need it — but is dormant with no radio HAL + config_voice_capable=false.
+$(call inherit-product, $(SRC_TARGET_DIR)/product/full_base.mk)
 
 $(call inherit-product, frameworks/native/build/phone-xhdpi-1024-dalvik-heap.mk)
 
@@ -25,9 +30,6 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.bluetooth_le.xml:system/etc/permissions/android.hardware.bluetooth_le.xml \
     frameworks/native/data/etc/android.hardware.broadcastradio.xml:system/etc/permissions/android.hardware.broadcastradio.xml \
     frameworks/native/data/etc/android.hardware.bluetooth.xml:system/etc/permissions/android.hardware.bluetooth.xml \
-    frameworks/native/data/etc/android.hardware.camera.flash-autofocus.xml:system/etc/permissions/android.hardware.camera.flash-autofocus.xml \
-    frameworks/native/data/etc/android.hardware.camera.front.xml:system/etc/permissions/android.hardware.camera.front.xml \
-    frameworks/native/data/etc/android.hardware.camera.manual_sensor.xml:system/etc/permissions/android.hardware.camera.manual_sensor.xml \
     frameworks/native/data/etc/android.hardware.faketouch.xml:system/etc/permissions/android.hardware.faketouch.xml \
     frameworks/native/data/etc/android.hardware.location.gps.xml:system/etc/permissions/android.hardware.location.gps.xml \
     frameworks/native/data/etc/android.hardware.sensor.accelerometer.xml:system/etc/permissions/android.hardware.sensor.accelerometer.xml \
@@ -57,6 +59,10 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/rootdir/system/etc/init/init.xdplus.rc:system/etc/init/init.xdplus.rc \
     $(LOCAL_PATH)/rootdir/system/etc/xdplus_wifi_seed.sh:system/etc/xdplus_wifi_seed.sh
 
+# Remove camera features the frozen vendor declares (device has no camera).
+PRODUCT_COPY_FILES += \
+    $(LOCAL_PATH)/rootdir/system/etc/sysconfig/xdplus-removed-features.xml:system/etc/sysconfig/xdplus-removed-features.xml
+
 # Audio
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/rootdir/system/etc/media_profiles.xml:system/etc/media_profiles.xml \
@@ -72,8 +78,7 @@ PRODUCT_COPY_FILES += \
 PRODUCT_COPY_FILES += \
      $(LOCAL_PATH)/configs/thermal.conf:system/etc/.tp/thermal.conf \
      $(LOCAL_PATH)/configs/.ht120.mtc:system/etc/.tp/.ht120.mtc \
-     $(LOCAL_PATH)/configs/thermal.off.conf:system/etc/.tp/thermal.off.conf \
-     $(LOCAL_PATH)/configs/sensors/_hals.conf:system/vendor/etc/sensors/_hals.conf
+     $(LOCAL_PATH)/configs/thermal.off.conf:system/etc/.tp/thermal.off.conf
 	
 # VNDK apex — the prebuilt 8.1 vendor's passthrough HALs (keymaster, gralloc,
 # hwcomposer, ...) need it; without it keystore crashloops on missing
@@ -179,7 +184,6 @@ PRODUCT_PACKAGES += \
     libcurl
 
 PRODUCT_DEFAULT_PROPERTY_OVERRIDES += \
-    camera.disable_zsl_mode=1 \
     ro.adb.secure=0 \
     ro.secure=0 \
     persist.sys.usb.config=adb
@@ -230,12 +234,10 @@ PRODUCT_PACKAGES += \
     android.hardware.graphics.composer@2.1-impl \
     android.hardware.graphics.composer@2.1-service
 
-# Camera HAL
-PRODUCT_PACKAGES += \
-    camera.device@1.0-impl \
-    camera.device@3.2-impl \
-    android.hardware.camera.provider@2.4-impl \
-    android.hardware.camera.provider@2.4-service
+# Camera HAL removed: device has no camera. The (system) generic camera.device /
+# provider@2.4 passthrough impls are unused here anyway — the vendor's own
+# camerahalserver is the only camera HAL, and it enumerates 0 devices. Dropping
+# these debloats system; features are stripped via sysconfig/xdplus-removed-features.xml.
 
 # Vibrator
 PRODUCT_PACKAGES += \
@@ -268,8 +270,6 @@ PRODUCT_PACKAGES += \
 
 # HIDL manifest handled via DEVICE_MANIFEST_FILE in BoardConfig.mk (18.1 VINTF)
 
-PRODUCT_COPY_FILES += \
-    $(LOCAL_PATH)/seccomp_policy/mediacodec.policy:system/vendor/etc/seccomp_policy/mediacodec.policy
 	
 PRODUCT_AAPT_CONFIG := normal hdpi
 PRODUCT_AAPT_PREF_CONFIG := hdpi

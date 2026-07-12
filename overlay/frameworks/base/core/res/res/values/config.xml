@@ -18,6 +18,13 @@
 -->
 
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- SIM-less tablet: no voice calls, no SMS. Makes the framework treat this
+         as a data/tablet device — Settings hides SIM status / phone number, no
+         dialer/SMS surfaces. Pair with the removed radio HAL (manifest.xml) and
+         the non-telephony product bases (xdplus.mk / lineage_xdplus.mk). -->
+    <bool name="config_voice_capable">false</bool>
+    <bool name="config_sms_capable">false</bool>
+
     <!-- Set to true to add links to Cell Broadcast app from Settings and MMS app. -->
     <bool name="config_cellBroadcastAppLinks">false</bool>
 

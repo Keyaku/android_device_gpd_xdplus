@@ -54,31 +54,9 @@
             <instance>default</instance>
         </interface>
     </hal>
-    <hal format="hidl">
-        <name>android.hardware.radio</name>
-        <transport>hwbinder</transport>
-        <version>1.0</version>
-        <interface>
-            <name>IRadio</name>
-            <instance>slot1</instance>
-            <instance>slot2</instance>
-        </interface>
-        <interface>
-            <name>ISap</name>
-            <instance>slot1</instance>
-            <instance>slot2</instance>
-        </interface>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.radio.deprecated</name>
-        <transport>hwbinder</transport>
-        <version>1.0</version>
-        <interface>
-            <name>IOemHook</name>
-            <instance>slot1</instance>
-            <instance>slot2</instance>
-        </interface>
-    </hal>
+<!-- Telephony stripped: SIM-less tablet build. No android.hardware.radio /
+         radio.deprecated HAL advertised, so the framework binds no modem and
+         reports no phone/SIM. Sideload telephony to restore. -->
     <hal format="hidl">
         <name>android.hardware.audio</name>
         <transport arch="32">passthrough</transport>
@@ -111,14 +89,6 @@
             <instance>default</instance>
         </interface>
     </hal>
-    <hal format="hidl">
-        <name>android.hardware.camera.provider</name>
-        <transport>hwbinder</transport>
-        <version>2.4</version>
-        <interface>
-            <name>ICameraProvider</name>
-            <instance>legacy/0</instance>
-            <instance>legacy/1</instance>
-        </interface>
-    </hal>
+    <!-- Camera stripped: device has no camera. No camera.provider HAL advertised.
+         (A BT camera would use an app-specific protocol, not this HAL.) -->
 </manifest>

@@ -15,13 +15,59 @@ on post-fs-data
     start xdplus-wifiseed
 
 # The prebuilt 8.1 vendor configstore service SIGSYS-crashes on its stale
-# seccomp policy and restart-loops forever (log noise, wasted cycles). The
-# system-side android.hardware.configstore@1.1-service.xdplus replaces it
-# (see device configstore/), so stop the vendor copy once boot completes.
+# seccomp policy. Worse than the crash-loop: it briefly registers configstore
+# @1.0 ISurfaceFlingerConfigs, clobbering the @1.0 chain entry the system
+# configstore-hal-system (@1.1 xdplus service) already registered — and when
+# the vendor process dies (crash, or the old stop-on-running hack here), the
+# @1.0 registration dies with it, so SurfaceFlinger spins ~30s in getService()
+# until a lazy-start kick makes the xdplus service exit/restart and re-register
+# the chain. The only safe state is: vendor copy NEVER runs. Override its
+# definition with a disabled one (same pattern as mediacodec below); system rc
+# parses before vendor rc, so the vendor duplicate is dropped.
+service configstore-hal-1-0 /vendor/bin/hw/android.hardware.configstore@1.0-service
+    class hal animation
+    user system
+    group system
+    disabled
+    override
+
+# Belt-and-suspenders: if it ever does get started (ctl.start, interface_start),
+# put it back down before it can clobber the @1.0 registration for long.
+on property:init.svc.configstore-hal-1-0=running
+    stop configstore-hal-1-0
+
+# The vendor omx service (O-era binary) can no longer link against the R
+# libstagefright (missing MediaCodecsXmlParser::defaultSearchDirs) and would
+# crash-loop every 5s all boot; media works via the system omx-hal-system,
+# which owns IOmx/IOmxStore. Override the vendor 'mediacodec' definition with
+# a disabled one so init never launches it (system rc parses before vendor rc,
+# so the vendor duplicate is dropped; 'override' covers the reverse order too).
+# The boot_completed 'stop mediacodec' below stays as a fallback.
+service mediacodec /vendor/bin/hw/android.hardware.media.omx@1.0-service
+    class main
+    user mediacodec
+    group camera drmrpc mediadrm
+    disabled
+    override
+
 on property:sys.boot_completed=1
     stop configstore-hal-1-0
     # vendor omx service is unlinkable (O-era ABI); system omx-hal-system replaces it
     stop mediacodec
+    # MT8173 boots on the kernel-default 'ondemand' governor: no input boost and
+    # go_hispeed_load=99 (won't ramp until ~saturated) => the felt input latency.
+    # Switch both clusters to interactive and lower the ramp thresholds. Done at
+    # boot_completed so it lands after the MTK power HAL, which would otherwise
+    # clobber an earlier write. Tunable nodes only exist once interactive is set,
+    # so set the governor first, then the tunables, in order.
+    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor interactive
+    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_governor interactive
+    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/go_hispeed_load 85
+    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/target_loads 80
+    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/min_sample_time 40000
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/go_hispeed_load 85
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/target_loads 80
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/min_sample_time 40000
 
 # Vendor HAL services started from the 8.1 vendor rc can lose the boot race
 # against hwservicemanager: the process stays alive but its interface never
