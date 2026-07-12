@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Empty placeholder app. Exists only so LOCAL_OVERRIDES_PACKAGES (Android.mk)
+     can exclude Camera2 from the build. No components, no permissions. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.xdplus.removedapps">
+    <application
+        android:hasCode="false"
+        android:label="" />
+</manifest>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SIM-less, camera-less tablet. The device has no camera; the frozen 8.1 vendor
+    still declares camera features in /vendor/etc/permissions, which we cannot
+    edit. <unavailable-feature> (parsed by SystemConfig from /system/etc/sysconfig
+    with ALLOW_FEATURES) removes a feature from the union even when another
+    partition declares it, so the OS reports no camera: no camera apps usable, and
+    SystemUI's flashlight tile auto-hides (no flash unit without a camera).
+
+    Microphone is intentionally KEPT: a BT/USB headset mic reports through the same
+    android.hardware.microphone feature, so removing it would make future headset
+    mics app-invisible (assistant / voice / recorders).
+-->
+<config>
+    <unavailable-feature name="android.hardware.camera" />
+    <unavailable-feature name="android.hardware.camera.any" />
+    <unavailable-feature name="android.hardware.camera.autofocus" />
+    <unavailable-feature name="android.hardware.camera.capability.manual_sensor" />
+    <unavailable-feature name="android.hardware.camera.flash" />
+    <unavailable-feature name="android.hardware.camera.front" />
+</config>
