@@ -76,3 +76,8 @@ ro.sf.hwrotation=180
 ril.radiooff.poweroffMD=0
 
 persist.sys.flat_rotation=1
+
+# MTK gen2 driver mishandles 802.11 power-save: APs low-ack-kick the device
+# mid-transfer (PORTING_LOG §44/§49). Patch 0012 pins framework power-save off
+# when this is set; init.xdplus.rc covers the raw driver default at load time.
+persist.sys.wifi_ps_pin_off=1

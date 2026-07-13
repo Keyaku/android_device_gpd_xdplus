@@ -42,6 +42,10 @@ BOARD_MKBOOTIMG_ARGS := --kernel_offset $(BOARD_KERNEL_OFFSET) --ramdisk_offset 
 
 # Shim CallStack (moved out of libutils in R) into the vendor graphics blobs
 TARGET_LD_SHIM_LIBS := \
+    /vendor/lib/libMtkOmxVdecEx.so|libshim_ui_codec.so \
+    /vendor/lib/libMtkOmxVenc.so|libshim_ui_codec.so \
+    /vendor/lib/libion_ulit.so|libshim_callstack.so \
+    /vendor/lib64/libion_ulit.so|libshim_callstack.so \
     /vendor/lib64/hw/gralloc.mt8173.so|libshim_callstack.so \
     /vendor/lib64/hw/hwcomposer.mt8173.so|libshim_callstack.so \
     /vendor/lib/hw/gralloc.mt8173.so|libshim_callstack.so \

@@ -69,6 +69,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/rootdir/system/etc/media_codecs.xml:system/etc/media_codecs.xml \
     $(LOCAL_PATH)/rootdir/system/etc/media_codecs_performance.xml:system/etc/media_codecs_performance.xml \
     $(LOCAL_PATH)/rootdir/system/etc/audio_policy.conf:system/etc/audio_policy.conf \
+    $(LOCAL_PATH)/rootdir/system/etc/audio_effects.xml:system/etc/audio_effects.xml \
     frameworks/av/media/libstagefright/data/media_codecs_google_audio.xml:system/etc/media_codecs_google_audio.xml \
     frameworks/av/media/libstagefright/data/media_codecs_google_telephony.xml:system/etc/media_codecs_google_telephony.xml \
     frameworks/av/media/libstagefright/data/media_codecs_google_video_le.xml:system/etc/media_codecs_google_video_le.xml
@@ -91,7 +92,7 @@ PRODUCT_PACKAGES += com.android.vndk.current
 PRODUCT_PACKAGES += libhwbinder libhidltransport
 
 # CallStack shim for vendor graphics blobs (see shims/Android.bp + TARGET_LD_SHIM_LIBS)
-PRODUCT_PACKAGES += libshim_callstack libshim_logbase libshim_audio libshim_wifi libshim_broadcastradio
+PRODUCT_PACKAGES += libshim_callstack libshim_logbase libshim_audio libshim_wifi libshim_broadcastradio libshim_ui_codec
 
 # Legacy system-side health@2.0 ("backup" instance) — the 8.1 vendor has no
 # health HAL and BatteryService crashes system_server without one. Reference
@@ -187,6 +188,13 @@ PRODUCT_DEFAULT_PROPERTY_OVERRIDES += \
     ro.adb.secure=0 \
     ro.secure=0 \
     persist.sys.usb.config=adb
+
+# MTK LK does not pass androidboot.bootloader on the kernel cmdline, so init
+# derives ro.bootloader="unknown". Own it with a device string (immutable ro.
+# prop set here wins over init's ro.boot.bootloader fallback). Refine to the
+# real LK/preloader version if it is ever extracted from the lk/preloader part.
+PRODUCT_DEFAULT_PROPERTY_OVERRIDES += \
+    ro.bootloader=GPD-XDPLUS-1.0
 	
 PRODUCT_PACKAGES += \
     librs_jni \

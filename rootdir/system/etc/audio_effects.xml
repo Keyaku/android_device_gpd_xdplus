@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  xdplus audio effects config (§52 permanent fix).
+
+  Purpose: make audioserver load effects from the AOSP software soundfx libs
+  instead of the frozen ALLDOCUBE 8.1 vendor config
+  (/system/vendor/etc/audio_effects.conf). That vendor .conf routes effect
+  creation into the MTK vendor effect path, whose CREATE_EFFECT hangs the
+  legacy audio HAL -> audioserver watchdog -> crash loop when AudioFX
+  (org.lineageos.audiofx) attaches its equalizer/bassboost/virtualizer. The
+  old workaround was `pm disable-user org.lineageos.audiofx`.
+
+  On Android 11 the effects framework (libeffects/libeffectsconfig) prefers an
+  `audio_effects.xml` found in /odm/etc -> /vendor/etc -> /system/etc over the
+  legacy .conf. No vendor/odm XML exists, so this /system/etc copy wins and the
+  frozen vendor .conf is bypassed entirely. All effects below resolve to the
+  software wrapper libs that already ship in /(system/)vendor/lib(64)/soundfx,
+  so no effect ever touches the vendor audio HAL.
+
+  Only libs actually present on-device are referenced. dynamics_processing is
+  intentionally omitted (no libdynproc.so on this device).
+-->
+<audio_effects_conf version="2.0" xmlns="http://schemas.android.com/audio/audio_effects_conf/v2_0">
+    <libraries>
+        <library name="bundle" path="libbundlewrapper.so"/>
+        <library name="reverb" path="libreverbwrapper.so"/>
+        <library name="visualizer" path="libvisualizer.so"/>
+        <library name="downmix" path="libdownmix.so"/>
+        <library name="loudness_enhancer" path="libldnhncr.so"/>
+        <library name="pre_processing" path="libaudiopreprocessing.so"/>
+    </libraries>
+    <effects>
+        <effect name="bassboost" library="bundle" uuid="8631f300-72e2-11df-b57e-0002a5d5c51b"/>
+        <effect name="virtualizer" library="bundle" uuid="1d4033c0-8557-11df-9f2d-0002a5d5c51b"/>
+        <effect name="equalizer" library="bundle" uuid="ce772f20-847d-11df-bb17-0002a5d5c51b"/>
+        <effect name="volume" library="bundle" uuid="119341a0-8469-11df-81f9-0002a5d5c51b"/>
+        <effect name="reverb_env_aux" library="reverb" uuid="4a387fc0-8ab3-11df-8bad-0002a5d5c51b"/>
+        <effect name="reverb_env_ins" library="reverb" uuid="c7a511a0-a3bb-11df-860e-0002a5d5c51b"/>
+        <effect name="reverb_pre_aux" library="reverb" uuid="f29a1400-a3bb-11df-8ddc-0002a5d5c51b"/>
+        <effect name="reverb_pre_ins" library="reverb" uuid="172cdf00-a3bc-11df-a72f-0002a5d5c51b"/>
+        <effect name="visualizer" library="visualizer" uuid="d069d9e0-8329-11df-9168-0002a5d5c51b"/>
+        <effect name="downmix" library="downmix" uuid="93f04452-e4fe-41cc-91f9-e475b6d1d69f"/>
+        <effect name="loudness_enhancer" library="loudness_enhancer" uuid="fa415329-2034-4bea-b5dc-5b381c8d1e2c"/>
+        <effect name="agc" library="pre_processing" uuid="aa8130e0-66fc-11e0-bad0-0002a5d5c51b"/>
+        <effect name="aec" library="pre_processing" uuid="bb392ec0-8d4d-11e0-a896-0002a5d5c51b"/>
+        <effect name="ns" library="pre_processing" uuid="c06c8400-8e06-11e0-9cb6-0002a5d5c51b"/>
+    </effects>
+</audio_effects_conf>
