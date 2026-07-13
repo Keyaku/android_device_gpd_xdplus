@@ -1,0 +1,26 @@
+diff --git a/service/java/com/android/server/wifi/ClientModeImpl.java b/service/java/com/android/server/wifi/ClientModeImpl.java
+index 14866c8..e0b8470 100644
+--- a/service/java/com/android/server/wifi/ClientModeImpl.java
++++ b/service/java/com/android/server/wifi/ClientModeImpl.java
+@@ -94,6 +94,7 @@ import android.os.Messenger;
+ import android.os.PowerManager;
+ import android.os.Process;
+ import android.os.RemoteException;
++import android.os.SystemProperties;
+ import android.os.UserHandle;
+ import android.os.UserManager;
+ import android.os.WorkSource;
+@@ -2876,6 +2877,13 @@ public class ClientModeImpl extends StateMachine {
+      * @return true for success, false for failure
+      */
+     public boolean setPowerSave(boolean ps) {
++        // Devices whose driver mishandles 802.11 power-save (APs low-ack-kick
++        // the STA under sustained transfer load) set persist.sys.wifi_ps_pin_off
++        // to keep power-save disabled no matter which framework path (post-DHCP
++        // restore, WifiLockManager) tries to re-enable it.
++        if (ps && SystemProperties.getBoolean("persist.sys.wifi_ps_pin_off", false)) {
++            ps = false;
++        }
+         if (mInterfaceName != null) {
+             if (mVerboseLoggingEnabled) {
+                 Log.d(TAG, "Setting power save for: " + mInterfaceName + " to: " + ps);

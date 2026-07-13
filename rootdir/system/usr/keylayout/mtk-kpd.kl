@@ -12,6 +12,11 @@ key 11    0
 key 158   BACK
 key 172   HOME
 key 580   APP_SWITCH
+# GPD XD+ "Gamepad Mapper" hardware button. Kernel keypad emits KEY_F12 (sc 88);
+# no mapping = event dropped. Map to F12 (KEYCODE_F12=142) as a neutral, unused
+# anchor keycode — the planned XD+ settings remap service intercepts it (nothing
+# to suppress, unlike ASSIST). Faithful to the hardware scancode.
+key 88    F12
 key 230   SOFT_RIGHT
 key 60    SOFT_RIGHT
 key 107   ENDCALL

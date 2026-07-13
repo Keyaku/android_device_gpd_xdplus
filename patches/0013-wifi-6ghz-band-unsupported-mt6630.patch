@@ -1,0 +1,37 @@
+From: xdplus port <noreply@localhost>
+Date: Mon, 13 Jul 2026 00:00:00 +0000
+Subject: [PATCH] wifi: report 6 GHz band unsupported (MT6630 has no 6E radio)
+
+WifiManager.is6GHzBandSupported() -> WifiServiceImpl.is6GhzBandSupportedInternal()
+-> ClientModeImpl.isWifiBandSupported(WIFI_BAND_6_GHZ). The overlay bool
+config_wifi6ghzSupport only short-circuits to *true*; when false (default) the
+method falls through to mWifiNative.getChannelsForBand(6GHZ).length > 0. The
+device's Wi-Fi chip is an MT6630 (2.4/5 GHz 802.11ac) with no 6 GHz radio, but
+the legacy MTK Wi-Fi HAL answers the 6 GHz channel query with phantom channels,
+so the probe returns true and device-info apps (Athena) wrongly show 6 GHz
+"Yes". The resource is true-only so no overlay can force it false; force false
+in code for this device. 5 GHz stays on the normal capability path.
+
+See docs/PORTING_LOG.md (2026-07-13 Wi-Fi/Athena triage).
+---
+diff --git a/service/java/com/android/server/wifi/ClientModeImpl.java b/service/java/com/android/server/wifi/ClientModeImpl.java
+index 14866c8..31d047f 100644
+--- a/service/java/com/android/server/wifi/ClientModeImpl.java
++++ b/service/java/com/android/server/wifi/ClientModeImpl.java
+@@ -1344,10 +1344,12 @@ public class ClientModeImpl extends StateMachine {
+         }
+ 
+         if (band == WifiScanner.WIFI_BAND_6_GHZ) {
+-            if (mContext.getResources().getBoolean(R.bool.config_wifi6ghzSupport)) {
+-                return true;
+-            }
+-            return (mWifiNative.getChannelsForBand(WifiScanner.WIFI_BAND_6_GHZ).length > 0);
++            // MT6630 has no 6 GHz (Wi-Fi 6E) radio. config_wifi6ghzSupport only
++            // short-circuits to true; keeping the original body would fall through
++            // to the capability probe, and the legacy MTK HAL's
++            // getChannelsForBand(6GHZ) returns phantom channels -> Athena/Settings
++            // wrongly report 6 GHz "Yes". Force false (PORTING_LOG wifi triage).
++            return false;
+         }
+ 
+         return false;

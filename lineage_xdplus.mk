@@ -14,6 +14,11 @@ PRODUCT_ENFORCE_RRO_EXCLUDED_OVERLAYS += vendor/lineage/overlay/dictionaries
 
 # Match the shipped Android 11 build fingerprint (ALLDOCUBE U1005E 8.1 vendor base)
 
+# ro.build.version.base_os (Athena "Base OS" was empty). PLATFORM_BASE_OS is the
+# only clean source for this prop — adding ro.build.version.base_os via
+# PRODUCT_PROPERTY_OVERRIDES collides with the build-generated key. Set it to our
+# own fingerprint (the OS this security-patch baseline is built from == this build).
+
 PRODUCT_NAME := lineage_xdplus
 PRODUCT_DEVICE := xdplus
 PRODUCT_BRAND := GPD

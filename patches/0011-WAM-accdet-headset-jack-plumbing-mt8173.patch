@@ -1,0 +1,99 @@
+diff --git a/services/core/java/com/android/server/WiredAccessoryManager.java b/services/core/java/com/android/server/WiredAccessoryManager.java
+index e4600330..b82b525a 100644
+--- a/services/core/java/com/android/server/WiredAccessoryManager.java
++++ b/services/core/java/com/android/server/WiredAccessoryManager.java
+@@ -78,6 +78,14 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
+     };
+     private static final String NAME_HDMI = "hdmi";
+ 
++    // xdplus: the MT8173 accdet driver exposes headset plug state here but never
++    // creates the /sys/class/switch/h2w node AOSP's UEventObserver path expects,
++    // so wired-jack detection is otherwise dead. Value: 0 = unplugged,
++    // 1 = headset (4-pole, with mic), 2 = headphone (3-pole, no mic).
++    private static final String ACCDET_STATE_PATH =
++            "/sys/bus/platform/drivers/Accdet_Driver/state";
++    private static final long ACCDET_POLL_INTERVAL_MS = 400;
++
+     private static final int MSG_NEW_DEVICE_STATE = 1;
+     private static final int MSG_SYSTEM_READY = 2;
+ 
+@@ -93,6 +101,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
+ 
+     private final WiredAccessoryObserver mObserver;
+     private final WiredAccessoryExtconObserver mExtconObserver;
++    private AccdetObserver mAccdetObserver;  // xdplus: MT8173 jack, started iff present
+     private final InputManagerService mInputManager;
+ 
+     private final boolean mUseDevInputEventForAudioJack;
+@@ -139,6 +148,15 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
+         } else {
+             mObserver.init();
+         }
++
++        // xdplus: MT8173 has no h2w switch node (see ACCDET_STATE_PATH); drive the
++        // wired-jack state from the accdet sysfs directly. Runs alongside the
++        // observers above (which still handle HDMI/USB) and only touches the h2w
++        // headset bits.
++        if (new File(ACCDET_STATE_PATH).exists()) {
++            mAccdetObserver = new AccdetObserver();
++            mAccdetObserver.start();
++        }
+     }
+ 
+     @Override
+@@ -380,6 +398,55 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
+         return sb.toString();
+     }
+ 
++    // xdplus: polls the MT8173 accdet sysfs and feeds the h2w headset bits through
++    // the normal updateLocked() path, so routing, speaker mute, headset-mic
++    // availability and the ACTION_HEADSET_PLUG status-bar icon all work despite the
++    // missing /sys/class/switch/h2w node. accdet exposes no usable uevent/poll to
++    // Java, so a light sysfs poll is used.
++    final class AccdetObserver extends Thread {
++        AccdetObserver() {
++            super("AccdetObserver");
++        }
++
++        @Override
++        public void run() {
++            int lastRaw = -1;
++            while (true) {
++                int raw = readAccdetState();
++                if (raw >= 0 && raw != lastRaw) {
++                    lastRaw = raw;
++                    int headset;
++                    switch (raw) {
++                        case 1:  headset = BIT_HEADSET; break;         // 4-pole, with mic
++                        case 2:  headset = BIT_HEADSET_NO_MIC; break;  // 3-pole, no mic
++                        default: headset = 0; break;                   // 0 = unplugged
++                    }
++                    synchronized (mLock) {
++                        updateLocked(NAME_H2W, "",
++                                (mHeadsetState & ~(BIT_HEADSET | BIT_HEADSET_NO_MIC | BIT_LINEOUT))
++                                        | headset);
++                    }
++                }
++                try {
++                    Thread.sleep(ACCDET_POLL_INTERVAL_MS);
++                } catch (InterruptedException e) {
++                    return;
++                }
++            }
++        }
++
++        private int readAccdetState() {
++            char[] buffer = new char[16];
++            try (FileReader file = new FileReader(ACCDET_STATE_PATH)) {
++                int len = file.read(buffer, 0, buffer.length);
++                if (len <= 0) return -1;
++                return Integer.parseInt(new String(buffer, 0, len).trim());
++            } catch (IOException | NumberFormatException e) {
++                return -1;
++            }
++        }
++    }
++
+     class WiredAccessoryObserver extends UEventObserver {
+         private final List<UEventInfo> mUEventInfo;
+ 

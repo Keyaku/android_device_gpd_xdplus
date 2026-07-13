@@ -39,6 +39,19 @@ cc_library_shared {
 	system_ext_specific: false,
 }
 
+// O-era libui symbols (GraphicBufferMapper 4-arg lock, Fence dtor) for the
+// MTK per-codec OMX blobs (see shim_ui_codec.cpp). 32-bit only — the vendor
+// only ships 32-bit codec libs and the omx service is compile_multilib "32".
+cc_library_shared {
+	name: "libshim_ui_codec",
+	compile_multilib: "32",
+	srcs: ["shim_ui_codec.cpp"],
+	shared_libs: [
+		"libui",
+		"libutils",
+	],
+}
+
 // wifi::V1_0::toString(sp<IWifiChipEventCallback>) for the vendor wifi HAL
 // service (see shim_wifi_tostring.cpp).
 cc_library_shared {
