@@ -17,6 +17,8 @@ Display | 5" 1280 x 720 px
 
 LineageOS 18.1 (Android 11) device tree for the GPD XD+ (`xdplus`).
 
+Derived from [BlackSeraph's LineageOS 15.1 tree for the same device](https://github.com/Black-Seraph/android_device_gpd_xds) (there codenamed `xds`), forward-ported to 18.1. Credit to BlackSeraph for the original GPD XD+ bring-up.
+
 Branch: `lineage-18.1` (the only supported branch — this port targets 18.1). The `mt8176` kernel is currently a prebuilt (`BoardConfig.mk TARGET_PREBUILT_KERNEL`); a from-source 3.18 kernel is in progress.
 
 ## Building
