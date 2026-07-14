@@ -17,6 +17,7 @@ Edits to upstream AOSP/LineageOS repos this port needs (can't live in the device
 | 0011 | `frameworks/base` | `WiredAccessoryManager` accdet plumbing — MT8173 accdet driver never creates `/sys/class/switch/h2w`, so AOSP's `UEventObserver` jack path is dead (no routing switch, speaker never mutes, headset mic never offered). Adds `AccdetObserver`, a light poll of `/sys/bus/platform/drivers/Accdet_Driver/state` (0=out, 1=headset+mic, 2=headphone) that feeds the h2w headset bits through the normal `updateLocked()` path → audio routing, speaker mute, `IN_WIRED_HEADSET` mic, and the `ACTION_HEADSET_PLUG` status-bar icon (§48). |
 | 0012 | `frameworks/opt/net/wifi` | `ClientModeImpl.setPowerSave`: pin power-save off when `persist.sys.wifi_ps_pin_off` is set — MTK gen2 driver mishandles 802.11 power-save and APs low-ack-kick the device under sustained transfer load (`DISASSOC_LOW_ACK`, §44/§49). Every framework re-enable path (post-DHCP restore, WifiLockManager) funnels through this method, so an init-rc `iw` write alone gets overridden seconds after each connect. Prop unset = stock behavior. |
 | 0013 | `frameworks/opt/net/wifi` | `ClientModeImpl.isWifiBandSupported`: force `false` for `WIFI_BAND_6_GHZ`. Chip is MT6630 (2.4/5 GHz, no 6E radio) but the legacy MTK HAL returns phantom 6 GHz channels, and the `config_wifi6ghzSupport` overlay is true-only (can't force false), so `is6GHzBandSupported()` wrongly reports "Yes" (Athena). 5 GHz left on the normal capability path (2026-07-13 Wi-Fi/Athena triage). |
+| 0014 | `frameworks/native` | `InputDispatcher`: kill the ~1 s input lag on the prebuilt 3.18.79 kernel. Two bugs, one symptom — (1) `pokeUserActivityLocked` runs a synchronous `mPolicy->pokeUserActivity()` that stalls the RT dispatcher thread ~1 s on the first event of a burst (queued events pile up, then drain at once); (2) `epoll_wait` with any non-zero timeout intermittently drops the eventfd wake. Fix: `dispatchOnce` uses `pollOnce(0)+usleep(1000)` (non-blocking, ~1 kHz, 2.5 % CPU) and `pokeUserActivityLocked` early-returns. NOT cpuidle/cpusets/schedtune (disproved live). Follow-ups (`docs/TRIAGE_2026-07-14.md`): stub drops the interactive screen-timeout reset (defer off-thread for the clean fix); verify the 1 kHz poll doesn't block suspend. |
 
 Apply:
 
@@ -35,4 +36,5 @@ git -C frameworks/av apply device/gpd/xdplus/patches/0010-*.patch
 git -C frameworks/base apply device/gpd/xdplus/patches/0011-*.patch
 git -C frameworks/opt/net/wifi apply device/gpd/xdplus/patches/0012-*.patch
 git -C frameworks/opt/net/wifi apply device/gpd/xdplus/patches/0013-*.patch
+git -C frameworks/native apply device/gpd/xdplus/patches/0014-*.patch
 ```
