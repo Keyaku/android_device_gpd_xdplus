@@ -18,6 +18,7 @@ PRODUCT_ENFORCE_RRO_EXCLUDED_OVERLAYS += vendor/lineage/overlay/dictionaries
 # only clean source for this prop — adding ro.build.version.base_os via
 # PRODUCT_PROPERTY_OVERRIDES collides with the build-generated key. Set it to our
 # own fingerprint (the OS this security-patch baseline is built from == this build).
+# Use ?= to avoid "cannot assign to readonly variable" on rebuilds.
 
 PRODUCT_NAME := lineage_xdplus
 PRODUCT_DEVICE := xdplus
