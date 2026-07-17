@@ -1,0 +1,35 @@
+diff --git a/services/audioflinger/Threads.cpp b/services/audioflinger/Threads.cpp
+index f9a1d9c..5b617b1 100644
+--- a/services/audioflinger/Threads.cpp
++++ b/services/audioflinger/Threads.cpp
+@@ -8594,7 +8594,16 @@ status_t AudioFlinger::RecordThread::createAudioPatch_l(const struct audio_patch
+         } else {
+             address = (char *)calloc(1, 1);
+         }
+-        AudioParameter param = AudioParameter(String8(address));
++        // xdplus: audio_device_address_to_parameter() returns a bare address
++        // (no "key=value") for built-in/back mics -- e.g. "bottom" that
++        // AudioPolicyManager assigns to AUDIO_DEVICE_IN_BUILTIN_MIC. Seeding
++        // AudioParameter with a bare token makes a valueless "bottom=" key the
++        // MT8173 frozen-8.1 vendor HAL rejects, so setParameters() returns
++        // -EINVAL and startInput() fails with -22 (all recording dead). Only
++        // seed the address when it is a real key=value (a2dp/usb/submix).
++        // See device/gpd/xdplus/patches/0015.
++        AudioParameter param = (strchr(address, '=') != nullptr) ?
++                AudioParameter(String8(address)) : AudioParameter();
+         free(address);
+         param.addInt(String8(AudioParameter::keyRouting),
+                      (int)patch->sources[0].ext.device.type);
+@@ -9251,7 +9260,11 @@ status_t AudioFlinger::MmapThread::createAudioPatch_l(const struct audio_patch *
+         } else {
+             address = (char *)calloc(1, 1);
+         }
+-        AudioParameter param = AudioParameter(String8(address));
++        // xdplus: skip bare (no "key=value") mic addresses like "bottom" that
++        // the MT8173 vendor HAL rejects -> setParameters() -EINVAL -> AAudio
++        // (MMAP) startInput() -22. See device/gpd/xdplus/patches/0015.
++        AudioParameter param = (strchr(address, '=') != nullptr) ?
++                AudioParameter(String8(address)) : AudioParameter();
+         free(address);
+         param.addInt(String8(AudioParameter::keyRouting), (int)type);
+         if (!isOutput()) {
