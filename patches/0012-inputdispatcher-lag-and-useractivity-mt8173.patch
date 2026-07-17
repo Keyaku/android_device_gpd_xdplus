@@ -1,6 +1,8 @@
+diff --git a/services/inputflinger/dispatcher/InputDispatcher.cpp b/services/inputflinger/dispatcher/InputDispatcher.cpp
+index ab1c132da1..be0a2d9f3f 100644
 --- a/services/inputflinger/dispatcher/InputDispatcher.cpp
 +++ b/services/inputflinger/dispatcher/InputDispatcher.cpp
-@@ -433,6 +433,21 @@
+@@ -433,6 +433,21 @@ status_t InputDispatcher::start() {
      }
      mThread = std::make_unique<InputThread>(
              "InputDispatcher", [this]() { dispatchOnce(); }, [this]() { mLooper->wake(); });
@@ -22,7 +24,7 @@
      return OK;
  }
  
-@@ -441,6 +456,7 @@
+@@ -441,6 +456,7 @@ status_t InputDispatcher::stop() {
          ALOGE("InputDispatcher cannot be stopped from its own thread!");
          return INVALID_OPERATION;
      }
@@ -30,70 +32,48 @@
      mThread.reset();
      return OK;
  }
-@@ -2172,17 +2188,97 @@
+@@ -476,9 +492,10 @@ void InputDispatcher::dispatchOnce() {
+     } // release lock
+ 
+     // Wait for callback or timeout or wake.  (make sure we round up, not down)
+-    nsecs_t currentTime = now();
+-    int timeoutMillis = toMillisecondTimeoutDelay(currentTime, nextWakeupTime);
+-    mLooper->pollOnce(timeoutMillis);
++    // GPD XD+ kernel 3.18.79+ bug: epoll_wait with ANY non-zero timeout
++    // intermittently fails to return. Use pollOnce(0) + usleep to bypass.
++    mLooper->pollOnce(0);
++    usleep(1000);
  }
  
- void InputDispatcher::pokeUserActivityLocked(const EventEntry* eventEntry) {
--    // GPD XD+ workaround: pokeUserActivity makes a synchronous binder call to
--    // the power HAL (mPolicy->pokeUserActivity) that blocks the InputDispatcher
--    // thread for ~1s on this device's 3.18.79+ kernel. This causes all
--    // subsequent input events to pile up in the inbound queue for ~1s before
--    // being dispatched as a burst — the exact "input lag" symptom.
--    //
--    // Skip it entirely: user activity (screen-on/wake-timeout reset) is not
--    // critical for input dispatch, and the screen is already on when touches
--    // arrive. The screen-off timeout is handled by the framework independently.
--    (void)eventEntry; // suppress unused parameter warning
--    return;
-+    if (eventEntry->type == EventEntry::Type::FOCUS) {
-+        // Focus events are passed to apps, but do not represent user activity.
-+        return;
-+    }
-+    int32_t displayId = getTargetDisplayId(*eventEntry);
-+    sp<InputWindowHandle> focusedWindowHandle =
-+            getValueByKey(mFocusedWindowHandlesByDisplay, displayId);
-+    if (focusedWindowHandle != nullptr) {
-+        const InputWindowInfo* info = focusedWindowHandle->getInfo();
-+        if (info->inputFeatures & InputWindowInfo::INPUT_FEATURE_DISABLE_USER_ACTIVITY) {
-+#if DEBUG_DISPATCH_CYCLE
-+            ALOGD("Not poking user activity: disabled by window '%s'.", info->name.c_str());
-+#endif
-+            return;
-+        }
-+    }
-+
-+    int32_t eventType = USER_ACTIVITY_EVENT_OTHER;
+ /**
+@@ -2189,6 +2206,7 @@ void InputDispatcher::pokeUserActivityLocked(const EventEntry* eventEntry) {
+     }
+ 
+     int32_t eventType = USER_ACTIVITY_EVENT_OTHER;
 +    int32_t keyCode = AKEYCODE_UNKNOWN;
-+    switch (eventEntry->type) {
-+        case EventEntry::Type::MOTION: {
-+            const MotionEntry* motionEntry = static_cast<const MotionEntry*>(eventEntry);
-+            if (motionEntry->action == AMOTION_EVENT_ACTION_CANCEL) {
-+                return;
-+            }
-+
-+            if (MotionEvent::isTouchEvent(motionEntry->source, motionEntry->action)) {
-+                eventType = USER_ACTIVITY_EVENT_TOUCH;
-+            }
-+            break;
-+        }
-+        case EventEntry::Type::KEY: {
-+            const KeyEntry* keyEntry = static_cast<const KeyEntry*>(eventEntry);
-+            if (keyEntry->flags & AKEY_EVENT_FLAG_CANCELED) {
-+                return;
-+            }
-+            eventType = USER_ACTIVITY_EVENT_BUTTON;
+     switch (eventEntry->type) {
+         case EventEntry::Type::MOTION: {
+             const MotionEntry* motionEntry = static_cast<const MotionEntry*>(eventEntry);
+@@ -2207,6 +2225,7 @@ void InputDispatcher::pokeUserActivityLocked(const EventEntry* eventEntry) {
+                 return;
+             }
+             eventType = USER_ACTIVITY_EVENT_BUTTON;
 +            keyCode = keyEntry->keyCode;
-+            break;
-+        }
-+        case EventEntry::Type::FOCUS:
-+        case EventEntry::Type::CONFIGURATION_CHANGED:
-+        case EventEntry::Type::DEVICE_RESET: {
-+            LOG_ALWAYS_FATAL("%s events are not user activity",
-+                             EventEntry::typeToString(eventEntry->type));
-+            break;
-+        }
-+    }
-+
+             break;
+         }
+         case EventEntry::Type::FOCUS:
+@@ -2218,16 +2237,48 @@ void InputDispatcher::pokeUserActivityLocked(const EventEntry* eventEntry) {
+         }
+     }
+ 
+-    std::unique_ptr<CommandEntry> commandEntry =
+-            std::make_unique<CommandEntry>(&InputDispatcher::doPokeUserActivityLockedInterruptible);
+-    commandEntry->eventTime = eventEntry->eventTime;
+-    commandEntry->userActivityEventType = eventType;
+-    if (eventType == USER_ACTIVITY_EVENT_BUTTON) {
+-        const KeyEntry* keyEntry = static_cast<const KeyEntry*>(eventEntry);
+-        commandEntry->keyEntry = const_cast<KeyEntry*>(keyEntry);
+-        keyEntry->refCount += 1;
 +    // GPD XD+ (patch 0016): hand the poke off to mUserActivityPokeThread instead
 +    // of calling mPolicy->pokeUserActivity() on this (RT) InputDispatcher thread.
 +    // The poke bottoms out in a synchronous power-HAL binder call
@@ -131,7 +111,8 @@
 +        eventType = mUserActivityPokeEventType;
 +        keyCode = mUserActivityPokeKeyCode;
 +        mUserActivityPokePending = false;
-+    }
+     }
+-    postCommandLocked(std::move(commandEntry));
 +    // Off the InputDispatcher thread: this call absorbs the ~1s power-HAL stall.
 +    // PowerManagerService throttles by event type, so bursts collapse to at most
 +    // one poke per MIN_TIME_BETWEEN_USERACTIVITIES.
@@ -139,9 +120,11 @@
  }
  
  void InputDispatcher::prepareDispatchCycleLocked(nsecs_t currentTime,
+diff --git a/services/inputflinger/dispatcher/InputDispatcher.h b/services/inputflinger/dispatcher/InputDispatcher.h
+index bf93d737fa..95efc3cc24 100644
 --- a/services/inputflinger/dispatcher/InputDispatcher.h
 +++ b/services/inputflinger/dispatcher/InputDispatcher.h
-@@ -141,6 +141,24 @@
+@@ -141,6 +141,24 @@ private:
  
      std::unique_ptr<InputThread> mThread;
  
