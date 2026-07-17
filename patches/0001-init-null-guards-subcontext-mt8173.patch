@@ -2,6 +2,18 @@ diff --git a/init/subcontext.cpp b/init/subcontext.cpp
 index 9d4ea8c..16e0a1b 100644
 --- a/init/subcontext.cpp
 +++ b/init/subcontext.cpp
+@@ -341,6 +341,11 @@ Subcontext* GetSubcontext() {
+ }
+ 
+ bool SubcontextChildReap(pid_t pid) {
++    // subcontext is never created on pre-P vendors (see InitializeSubcontext);
++    // without this guard init SIGSEGVs reaping its first dead child.
++    if (!subcontext) {
++        return false;
++    }
+     if (subcontext->pid() == pid) {
+         if (!subcontext_terminated_by_shutdown) {
+             subcontext->Restart();
 @@ -352,6 +357,13 @@ bool SubcontextChildReap(pid_t pid) {
  
  void SubcontextTerminate() {
