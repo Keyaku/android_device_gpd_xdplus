@@ -81,3 +81,9 @@ persist.sys.flat_rotation=1
 # mid-transfer (PORTING_LOG §44/§49). Patch 0012 pins framework power-save off
 # when this is set; init.xdplus.rc covers the raw driver default at load time.
 persist.sys.wifi_ps_pin_off=1
+
+# MT6630 gen2 HAL never reports the negotiated PHY mode, so WifiInfo standard
+# stays UNKNOWN on every connection. Chip is HT-only on this board (5 GHz/VHT
+# eFuse-gated, A/B-proven), so patch 0013 labels the standard 802.11n when this
+# is set. Cosmetic (correct UI badge); unset = stock UNKNOWN behavior.
+persist.sys.wifi_standard_11n_fallback=1
