@@ -1,5 +1,5 @@
 diff --git a/service/java/com/android/server/wifi/ClientModeImpl.java b/service/java/com/android/server/wifi/ClientModeImpl.java
-index 14866c8..e0b8470 100644
+index 14866c8..847c846 100644
 --- a/service/java/com/android/server/wifi/ClientModeImpl.java
 +++ b/service/java/com/android/server/wifi/ClientModeImpl.java
 @@ -94,6 +94,7 @@ import android.os.Messenger;
@@ -10,6 +10,21 @@ index 14866c8..e0b8470 100644
  import android.os.UserHandle;
  import android.os.UserManager;
  import android.os.WorkSource;
+@@ -1344,10 +1345,10 @@ public class ClientModeImpl extends StateMachine {
+         }
+ 
+         if (band == WifiScanner.WIFI_BAND_6_GHZ) {
+-            if (mContext.getResources().getBoolean(R.bool.config_wifi6ghzSupport)) {
+-                return true;
+-            }
+-            return (mWifiNative.getChannelsForBand(WifiScanner.WIFI_BAND_6_GHZ).length > 0);
++            // MT6630 has no 6E radio, but the legacy HAL returns phantom 6 GHz
++            // channels from getChannelsForBand() and the overlay is true-only.
++            // Force false so the framework never advertises 6 GHz capability.
++            return false;
+         }
+ 
+         return false;
 @@ -2876,6 +2877,13 @@ public class ClientModeImpl extends StateMachine {
       * @return true for success, false for failure
       */
