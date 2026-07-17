@@ -53,6 +53,17 @@ struct FenceLayout {
 // garbage in r0 and crashed the decoder with free(0xffffffff). Declare the
 // shims to return the object pointer.
 extern "C" void* _ZN7android5FenceD1Ev(FenceLayout* thiz) {
+	// Guard the caller's trailing free()/operator delete (§51). WaitFence (and
+	// the HEVC decode path) feed this dtor's return value straight into a
+	// delete/free. If the "Fence" was never a real heap object — an
+	// uninitialised −1 handle, seen as the HEVC SIGABRT "frees uninit −1 fence"
+	// / Scudo "misaligned pointer when deallocating 0xffffffff" — dereferencing
+	// or returning it aborts the codec. Return nullptr so the following free is
+	// a well-defined no-op. A genuine heap Fence is never null/−1, so the H.264
+	// path (valid r5 from operator new) is unchanged.
+	if (thiz == nullptr || reinterpret_cast<uintptr_t>(thiz) == UINTPTR_MAX) {
+		return nullptr;
+	}
 	if (thiz->fd >= 0) {
 		// Mirror unique_fd::~unique_fd(): the tag is derived from the
 		// unique_fd member's own address.
