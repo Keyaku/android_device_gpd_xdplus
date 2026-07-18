@@ -11,15 +11,6 @@ service xdplus-wifiseed /system/bin/sh /system/etc/xdplus_wifi_seed.sh
     disabled
     oneshot
 
-# Re-enable Wi-Fi after a HAL SelfRecovery disable (see xdplus_wifi_selfheal.sh).
-# Runs as root: needs `settings` + `cmd` (system context), SELinux permissive.
-service xdplus-wifi-selfheal /system/bin/sh /system/etc/xdplus_wifi_selfheal.sh
-    class main
-    user root
-    group system wifi
-    disabled
-    oneshot
-
 on post-fs-data
     start xdplus-wifiseed
 
@@ -75,10 +66,6 @@ on property:sys.boot_completed=1
     stop configstore-hal-1-0
     # vendor omx service is unlinkable (O-era ABI); system omx-hal-system replaces it
     stop mediacodec
-    # Re-enable Wi-Fi if the HAL SelfRecovery throttled it off at early boot
-    # (see xdplus_wifi_selfheal.sh — only acts when the user setting is "on"
-    # but supplicant is stopped; otherwise a no-op).
-    start xdplus-wifi-selfheal
     # MT8173 boots on the kernel-default 'ondemand' governor: no input boost and
     # go_hispeed_load=99 (won't ramp until ~saturated) => the felt input latency.
     # Switch both clusters to interactive and lower the ramp thresholds. Done at
