@@ -57,7 +57,8 @@ PRODUCT_COPY_FILES += \
 # seed wpa/p2p supplicant configs on fresh /data — see xdplus_wifi_seed.sh)
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/rootdir/system/etc/init/init.xdplus.rc:system/etc/init/init.xdplus.rc \
-    $(LOCAL_PATH)/rootdir/system/etc/xdplus_wifi_seed.sh:system/etc/xdplus_wifi_seed.sh
+    $(LOCAL_PATH)/rootdir/system/etc/xdplus_wifi_seed.sh:system/etc/xdplus_wifi_seed.sh \
+    $(LOCAL_PATH)/rootdir/system/etc/xdplus_tweaks.sh:system/etc/xdplus_tweaks.sh
 
 # Remove camera features the frozen vendor declares (device has no camera).
 PRODUCT_COPY_FILES += \

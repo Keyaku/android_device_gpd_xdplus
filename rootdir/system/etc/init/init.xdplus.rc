@@ -1,5 +1,41 @@
 # xdplus system-side init additions.
 
+# --- GPD XD+ tweaks menu dispatch (Settings > GPD XD+) -----------------------
+# The in-Settings menu sets sys.xdplus.*/persist.sys.xdplus.* props; these
+# triggers run the root-side dispatcher. See rootdir .../xdplus_tweaks.sh and
+# PORTING_LOG (mini-HDMI out). SELinux is permissive on this port, so no extra
+# property/domain rules are needed.
+service xdplus-tweaks /system/bin/sh /system/etc/xdplus_tweaks.sh ${sys.xdplus.action}
+    class main
+    user root
+    group root system graphics input
+    disabled
+    oneshot
+
+# Momentary action dispatch. The menu only ever sets these post-boot, so the
+# script (which pokes SurfaceFlinger) is always safe here. hdmi_up/hdmi_down and
+# the live unfreeze toggle all route through the single dispatcher service,
+# whose command arg is ${sys.xdplus.action}.
+on property:sys.xdplus.action=hdmi_up
+    start xdplus-tweaks
+
+on property:sys.xdplus.action=hdmi_down
+    start xdplus-tweaks
+
+on property:sys.xdplus.action=unfreeze
+    start xdplus-tweaks
+
+# Re-apply persisted toggles once the framework is up.
+service xdplus-tweaks-boot /system/bin/sh /system/etc/xdplus_tweaks.sh boot
+    class main
+    user root
+    group root system graphics
+    disabled
+    oneshot
+
+on property:sys.boot_completed=1
+    start xdplus-tweaks-boot
+
 # Seed /data/misc/wifi/{wpa,p2p}_supplicant.conf on a fresh /data. This port's
 # init only creates the dir; nothing recreates the templates wpa_supplicant is
 # launched with, so a factory reset otherwise leaves Wi-Fi permanently unable to
