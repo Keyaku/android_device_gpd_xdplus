@@ -1,26 +1,70 @@
 diff --git a/service/java/com/android/server/wifi/ActiveModeWarden.java b/service/java/com/android/server/wifi/ActiveModeWarden.java
-index e370a8c..256f36d 100644
+index e370a8c..bb3892b 100644
 --- a/service/java/com/android/server/wifi/ActiveModeWarden.java
 +++ b/service/java/com/android/server/wifi/ActiveModeWarden.java
-@@ -832,9 +832,14 @@ public class ActiveModeWarden {
+@@ -622,11 +622,20 @@ public class ActiveModeWarden {
+         static final int CMD_UPDATE_AP_CAPABILITY                   = BASE + 24;
+         static final int CMD_UPDATE_AP_CONFIG                       = BASE + 25;
+ 
++        // On the MT6630 combo chip, STA_IFACE_DOWN is caused by a BT firmware
++        // assert + whole-chip reset; the STP transport can take minutes (and
++        // several assert/reset cycles) to settle, so recovery restarts use a
++        // longer delay than the default 2 s and retry on STA start failure.
++        private static final int STA_IFACE_DOWN_RECOVERY_DELAY_MS = 30 * 1000;
++        private static final int STA_IFACE_DOWN_RECOVERY_MAX_RETRIES = 6;
++
+         private final EnabledState mEnabledState = new EnabledState();
+         private final DisabledState mDisabledState = new DisabledState();
+ 
+         private boolean mIsInEmergencyCall = false;
+         private boolean mIsInEmergencyCallbackMode = false;
++        // Remaining STA start retries for the current STA_IFACE_DOWN recovery.
++        private int mStaStartRetriesRemaining = 0;
+ 
+         WifiController() {
+             super(TAG, mLooper);
+@@ -832,9 +841,18 @@ public class ActiveModeWarden {
                          log("Recovery triggered, already in disabled state");
                          // intentional fallthrough
                      case CMD_DEFERRED_RECOVERY_RESTART_WIFI:
 -                        // wait mRecoveryDelayMillis for letting driver clean reset.
 -                        sendMessageDelayed(CMD_RECOVERY_RESTART_WIFI_CONTINUE,
 -                                readWifiRecoveryDelay());
-+                        // wait for letting driver clean reset. On the MT6630 combo
-+                        // chip, STA_IFACE_DOWN is caused by a BT firmware assert +
-+                        // whole-chip reset; the STP transport takes ~2-3 min to
-+                        // recover, so use a longer delay (30 s) than the default
-+                        // (2 s) to avoid re-enabling before the chip is ready.
-+                        int delay = (msg.arg1 == SelfRecovery.REASON_STA_IFACE_DOWN)
-+                                ? 30000 : readWifiRecoveryDelay();
-+                        sendMessageDelayed(CMD_RECOVERY_RESTART_WIFI_CONTINUE, delay);
++                        // wait for letting driver clean reset. For STA_IFACE_DOWN
++                        // (MT6630 combo-chip reset) use a longer delay and arm the
++                        // start-failure retry loop, since the chip may still be
++                        // resetting when the first restart attempt fires.
++                        int recoveryDelay;
++                        if (msg.arg1 == SelfRecovery.REASON_STA_IFACE_DOWN) {
++                            recoveryDelay = STA_IFACE_DOWN_RECOVERY_DELAY_MS;
++                            mStaStartRetriesRemaining = STA_IFACE_DOWN_RECOVERY_MAX_RETRIES;
++                        } else {
++                            recoveryDelay = readWifiRecoveryDelay();
++                        }
++                        sendMessageDelayed(CMD_RECOVERY_RESTART_WIFI_CONTINUE, recoveryDelay);
                          break;
                      case CMD_RECOVERY_RESTART_WIFI_CONTINUE:
                          if (shouldEnableSta()) {
-@@ -955,7 +960,8 @@ public class ActiveModeWarden {
+@@ -931,6 +949,18 @@ public class ActiveModeWarden {
+                         }
+                         break;
+                     case CMD_STA_START_FAILURE:
++                        // During an MT6630 STA_IFACE_DOWN recovery the combo chip may
++                        // still be resetting when the restart fires (iface create fails
++                        // with the driver-load I/O error). Retry until the chip settles.
++                        if (mStaStartRetriesRemaining > 0 && shouldEnableSta()) {
++                            mStaStartRetriesRemaining--;
++                            log("STA start failed during recovery, retrying in "
++                                    + STA_IFACE_DOWN_RECOVERY_DELAY_MS + " ms ("
++                                    + mStaStartRetriesRemaining + " retries left)");
++                            sendMessageDelayed(CMD_RECOVERY_RESTART_WIFI_CONTINUE,
++                                    STA_IFACE_DOWN_RECOVERY_DELAY_MS);
++                        }
++                        // intentional fallthrough
+                     case CMD_STA_STOPPED:
+                         // Client mode stopped. Head to Disabled to wait for next command if there
+                         // no active mode managers.
+@@ -955,7 +985,8 @@ public class ActiveModeWarden {
                              mHandler.post(() -> mClientModeImpl.takeBugReport(bugTitle, bugDetail));
                          }
                          log("Recovery triggered, disable wifi");
@@ -31,10 +75,37 @@ index e370a8c..256f36d 100644
                          // onStopped will move the state machine to "DisabledState".
                          break;
 diff --git a/service/java/com/android/server/wifi/SelfRecovery.java b/service/java/com/android/server/wifi/SelfRecovery.java
-index b7eb723..7c9374e 100644
+index b7eb723..025669f 100644
 --- a/service/java/com/android/server/wifi/SelfRecovery.java
 +++ b/service/java/com/android/server/wifi/SelfRecovery.java
-@@ -91,8 +91,28 @@ public class SelfRecovery {
+@@ -60,16 +60,26 @@ public class SelfRecovery {
+             "Sta Interface Down"     // REASON_STA_IFACE_DOWN
+     };
+ 
++    // Max STA_IFACE_DOWN recovery restarts per hour. On the MT6630 combo chip
++    // the BT firmware can assert (and whole-chip reset) several times in one
++    // boot, so this is deliberately higher than
++    // config_wifiMaxNativeFailureSelfRecoveryPerHour (default 2) and tracked
++    // separately so BT-crash recoveries don't consume the native-failure budget.
++    private static final int MAX_STA_IFACE_DOWN_RECOVERIES_PER_HOUR = 4;
++
+     private final Context mContext;
+     private final ActiveModeWarden mActiveModeWarden;
+     private final Clock mClock;
+     // Time since boot (in millis) that restart occurred
+     private final LinkedList<Long> mPastRestartTimes;
++    // Time since boot (in millis) of STA_IFACE_DOWN recovery restarts
++    private final LinkedList<Long> mPastStaIfaceDownTimes;
+     public SelfRecovery(Context context, ActiveModeWarden activeModeWarden, Clock clock) {
+         mContext = context;
+         mActiveModeWarden = activeModeWarden;
+         mClock = clock;
+         mPastRestartTimes = new LinkedList<>();
++        mPastStaIfaceDownTimes = new LinkedList<>();
+     }
+ 
+     /**
+@@ -91,8 +101,24 @@ public class SelfRecovery {
              return;
          }
          if (reason == REASON_STA_IFACE_DOWN) {
@@ -43,25 +114,44 @@ index b7eb723..7c9374e 100644
 +            // On the MT6630 combo chip, STA iface down is a transient side
 +            // effect of a BT firmware assert crashing the shared SDIO
 +            // function — the WMT layer does a whole-chip reset, wlan0 is
-+            // unregistered, and the framework sees CMD_INTERFACE_DOWN.
-+            // The kernel's own wifi_reset_end recovers wlan0 once STP settles
-+            // (~2-3 min), but the default "disable + never re-enable" parks
-+            // Wi-Fi before that recovery completes. Restart (toggle off->on
-+            // with delay) instead, so the framework retries after the combo
-+            // chip has recovered. Throttle like WIFINATIVE_FAILURE to avoid
-+            // infinite restart loops if the iface is genuinely broken.
++            // unregistered, and the framework sees CMD_INTERFACE_DOWN. The
++            // chip recovers once STP settles, but the AOSP default
++            // "disable + never re-enable" parks Wi-Fi before that. Restart
++            // (toggle off->on with delay + start-failure retries in
++            // ActiveModeWarden) instead, throttled on its own budget so a
++            // genuinely broken iface doesn't loop forever.
 +            Log.e(TAG, "STA interface down, attempting recovery restart");
-+            int maxRecoveriesPerHour = mContext.getResources().getInteger(
-+                    R.integer.config_wifiMaxNativeFailureSelfRecoveryPerHour);
-+            if (maxRecoveriesPerHour == 0
-+                    || mPastRestartTimes.size() >= maxRecoveriesPerHour) {
++            trimPastTimes(mPastStaIfaceDownTimes);
++            if (mPastStaIfaceDownTimes.size() >= MAX_STA_IFACE_DOWN_RECOVERIES_PER_HOUR) {
 +                Log.e(TAG, "STA iface down recovery throttled, disabling wifi");
 +                mActiveModeWarden.recoveryDisableWifi();
 +                return;
 +            }
-+            trimPastRestartTimes();
-+            mPastRestartTimes.add(mClock.getElapsedSinceBootMillis());
++            mPastStaIfaceDownTimes.add(mClock.getElapsedSinceBootMillis());
 +            mActiveModeWarden.recoveryRestartWifi(reason);
              return;
          }
  
+@@ -105,7 +131,7 @@ public class SelfRecovery {
+                 mActiveModeWarden.recoveryDisableWifi();
+                 return;
+             }
+-            trimPastRestartTimes();
++            trimPastTimes(mPastRestartTimes);
+             if (mPastRestartTimes.size() >= maxRecoveriesPerHour) {
+                 Log.e(TAG, "Already restarted wifi " + maxRecoveriesPerHour + " times in"
+                         + " last 1 hour. Disabling wifi");
+@@ -118,10 +144,10 @@ public class SelfRecovery {
+     }
+ 
+     /**
+-     * Process the mPastRestartTimes list, removing elements outside the max restarts time window
++     * Process a restart-times list, removing elements outside the max restarts time window
+      */
+-    private void trimPastRestartTimes() {
+-        Iterator<Long> iter = mPastRestartTimes.iterator();
++    private void trimPastTimes(LinkedList<Long> times) {
++        Iterator<Long> iter = times.iterator();
+         long now = mClock.getElapsedSinceBootMillis();
+         while (iter.hasNext()) {
+             Long restartTimeMillis = iter.next();
