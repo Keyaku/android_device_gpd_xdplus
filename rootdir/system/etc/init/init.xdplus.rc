@@ -11,8 +11,12 @@ service xdplus-wifiseed /system/bin/sh /system/etc/xdplus_wifi_seed.sh
     disabled
     oneshot
 
-# Re-enable Wi-Fi after a HAL SelfRecovery disable (see xdplus_wifi_selfheal.sh).
-# Runs as root: needs `settings` + `cmd` (system context), SELinux permissive.
+# Re-enable Wi-Fi after a combo-chip reset takes it down (see
+# xdplus_wifi_selfheal.sh). The MT6630 BT firmware asserts ~64-104 s after
+# boot, crashing the combo chip and unregistering wlan0; SelfRecovery then
+# parks Wi-Fi in DisabledState. The script waits out the assert window,
+# then retries re-enable (STP takes ~2-3 min to recover). Root: needs
+# `settings` + `cmd` (system context), SELinux permissive.
 service xdplus-wifi-selfheal /system/bin/sh /system/etc/xdplus_wifi_selfheal.sh
     class main
     user root
