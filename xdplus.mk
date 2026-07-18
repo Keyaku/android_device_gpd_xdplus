@@ -54,10 +54,12 @@ PRODUCT_COPY_FILES += \
      $(LOCAL_PATH)/configs/agps_profiles_conf2.xml:system/etc/agps_profiles_conf2.xml \
 
 # System-side init additions (stop the crash-looping vendor configstore;
-# seed wpa/p2p supplicant configs on fresh /data — see xdplus_wifi_seed.sh)
+# seed wpa/p2p supplicant configs on fresh /data — see xdplus_wifi_seed.sh;
+# re-enable Wi-Fi after a HAL SelfRecovery disable — see xdplus_wifi_selfheal.sh)
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/rootdir/system/etc/init/init.xdplus.rc:system/etc/init/init.xdplus.rc \
-    $(LOCAL_PATH)/rootdir/system/etc/xdplus_wifi_seed.sh:system/etc/xdplus_wifi_seed.sh
+    $(LOCAL_PATH)/rootdir/system/etc/xdplus_wifi_seed.sh:system/etc/xdplus_wifi_seed.sh \
+    $(LOCAL_PATH)/rootdir/system/etc/xdplus_wifi_selfheal.sh:system/etc/xdplus_wifi_selfheal.sh
 
 # Remove camera features the frozen vendor declares (device has no camera).
 PRODUCT_COPY_FILES += \
