@@ -1,7 +1,7 @@
 diff --git a/service/java/com/android/server/wifi/ClientModeImpl.java b/service/java/com/android/server/wifi/ClientModeImpl.java
 --- a/service/java/com/android/server/wifi/ClientModeImpl.java
 +++ b/service/java/com/android/server/wifi/ClientModeImpl.java
-@@ -2692,7 +2692,16 @@ public class ClientModeImpl extends StateMachine {
+@@ -2692,7 +2692,18 @@ public class ClientModeImpl extends StateMachine {
          ThroughputPredictor throughputPredictor = mWifiInjector.getThroughputPredictor();
          int maxTxLinkSpeedMbps = throughputPredictor.predictMaxTxThroughput(capabilities);
          int maxRxLinkSpeedMbps = throughputPredictor.predictMaxRxThroughput(capabilities);
@@ -10,10 +10,12 @@ diff --git a/service/java/com/android/server/wifi/ClientModeImpl.java b/service/
 +        if (wifiStandard == ScanResult.WIFI_STANDARD_UNKNOWN
 +                && SystemProperties.getBoolean("persist.sys.wifi_standard_11n_fallback", false)) {
 +            // The MT6630 gen2 HAL never reports the negotiated PHY mode, leaving
-+            // WifiInfo standard = UNKNOWN even on a live HT link. The chip is
-+            // HT-only on this board (5 GHz/VHT eFuse-gated, no HE; A/B-proven vs
-+            // the prebuilt kernel), so the real max is 802.11n — label it as such.
-+            wifiStandard = ScanResult.WIFI_STANDARD_11N;
++            // WifiInfo standard = UNKNOWN even on a live link. The FULLMAC
++            // firmware negotiates VHT on 5 GHz (verified: VHT80 MCS9, 433 Mbit/s
++            // @5805 MHz) while 2.4 GHz links are HT-only, so label by band.
++            wifiStandard = mWifiInfo.getFrequency() > 5000
++                    ? ScanResult.WIFI_STANDARD_11AC
++                    : ScanResult.WIFI_STANDARD_11N;
 +        }
 +        mWifiInfo.setWifiStandard(wifiStandard);
          mWifiInfo.setMaxSupportedTxLinkSpeedMbps(maxTxLinkSpeedMbps);
