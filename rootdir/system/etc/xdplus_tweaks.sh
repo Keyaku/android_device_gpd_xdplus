@@ -106,6 +106,22 @@ hdmi_down() {
 	xlog "HDMI torn down"
 }
 
+# Relay a vkshim compile-progress update (sys.xdplus.vkcompile = "<pkg>:<count>")
+# to the Settings receiver. Reads the prop live rather than taking an argument so
+# rapid updates coalesce to the newest value. Explicit-component broadcast from
+# root reaches the non-exported receiver.
+vknotify() {
+	MODE="$(getprop persist.sys.xdplus.vknotify)"
+	[ -z "$MODE" ] && MODE=notification
+	[ "$MODE" = "off" ] && return 0
+	V="$(getprop sys.xdplus.vkcompile)"
+	[ -z "$V" ] && return 0
+	PKG="${V%%:*}"
+	CNT="${V##*:}"
+	am broadcast -n com.android.settings/.gpd.VkCompileReceiver \
+		--es pkg "$PKG" --es count "$CNT" --es mode "$MODE" >/dev/null 2>&1
+}
+
 CMD="$1"
 
 # Guard: the SurfaceFlinger-poking paths must never run before the framework is
@@ -125,6 +141,9 @@ case "$CMD" in
 	# Boot path: apply the persisted value but do NOT poke SurfaceFlinger while it
 	# is still settling. The composer picks it up on its next natural deviceDump.
 	boot)      apply_unfreeze ;;
+	# Compile-progress relay: exits quietly, and must NOT clear sys.xdplus.action
+	# (it never set it).
+	vknotify)  vknotify; exit 0 ;;
 	*)         xlog "unknown command: $CMD"; exit 1 ;;
 esac
 setprop sys.xdplus.action none

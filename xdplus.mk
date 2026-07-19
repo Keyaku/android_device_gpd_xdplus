@@ -12,6 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Keylayout — MUST stay above every inherit-product line. PRODUCT_COPY_FILES
+# dedup is first-entry-wins, and full_base → handheld_system → frameworks
+# keyboards.mk ships a stock DS4 Vendor_054c_Product_05c4.kl (no D-Pad
+# 0x124-0x127 mapping) that would otherwise shadow ours. EventHub searches
+# /system BEFORE /data/system/devices, so the on-device override can't save us.
+# Explicit path: $(LOCAL_PATH) is not yet set this early.
+PRODUCT_COPY_FILES += \
+    device/gpd/xdplus/rootdir/system/usr/keylayout/mtk-kpd.kl:system/usr/keylayout/mtk-kpd.kl \
+    device/gpd/xdplus/rootdir/system/usr/keylayout/Vendor_054c_Product_05c4.kl:system/usr/keylayout/Vendor_054c_Product_05c4.kl
+
 $(call inherit-product, $(SRC_TARGET_DIR)/product/languages_full.mk)
 # SIM-less tablet: full_base (non-telephony) instead of full_base_telephony.
 # Drops AOSP telephony.mk extras (Dialer, CarrierConfig, CarrierDefaultApp, ONS,
@@ -125,10 +135,11 @@ PRODUCT_PACKAGES += android.hardware.dumpstate@1.1-service.xdplus
 # the vendor MTK codec plugin (libstagefrighthw) via OMXMaster.
 PRODUCT_PACKAGES += android.hardware.media.omx@1.0-service.xdplus
 
-# Vulkan driver symlinks into /system/lib{,64} (see vulkan/Android.mk):
+# Vulkan big-stack shim into /system/lib{,64} (see vulkan/Android.mk):
 # non-Treble default namespace can't see /vendor/lib64/hw, loader dlopens
-# bare "vulkan.mt8173.so" → 0 physical devices without these.
-PRODUCT_PACKAGES += vulkan.mt8173_symlink64 vulkan.mt8173_symlink32
+# bare "vulkan.mt8173.so"; shim forwards to the vendor blob but compiles
+# pipelines on a 64 MB stack (DDK 1.9 libusc recursion overflow).
+PRODUCT_PACKAGES += vulkan.mt8173
 
 # Old HIDL libs the vendor audio HAL links against (not installed by default in R)
 PRODUCT_PACKAGES += android.hardware.soundtrigger@2.0 android.hardware.audio.common@2.0-util libaudioroute libaudiospdif
@@ -142,10 +153,6 @@ PRODUCT_PACKAGES += android.hardware.soundtrigger@2.0-impl-xdplus
 # First-stage fstab in the boot ramdisk (see rootdir/ramdisk/fstab.mt8173)
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/rootdir/ramdisk/fstab.mt8173:$(TARGET_COPY_OUT_RAMDISK)/fstab.mt8173
-
-# Keylayout
-PRODUCT_COPY_FILES += \
-    $(LOCAL_PATH)/rootdir/system/usr/keylayout/mtk-kpd.kl:system/usr/keylayout/mtk-kpd.kl \
 
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/rootdir/system/etc/hostapd/hostapd_default.conf:system/etc/hostapd/hostapd_default.conf \

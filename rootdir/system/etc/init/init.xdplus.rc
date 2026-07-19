@@ -25,6 +25,28 @@ on property:sys.xdplus.action=hdmi_down
 on property:sys.xdplus.action=unfreeze
     start xdplus-tweaks
 
+# --- Vulkan shader-compile progress relay ------------------------------------
+# vkshim (system/lib{,64}/vulkan.mt8173.so) publishes "<pkg>:<count>" on
+# sys.xdplus.vkcompile while a slow pipeline compile runs; relay each update to
+# the Settings VkCompileReceiver, which shows a notification or toast per
+# persist.sys.xdplus.vknotify. The service re-reads the prop itself, so updates
+# arriving while a relay is still running are coalesced, not queued.
+service xdplus-vknotify /system/bin/sh /system/etc/xdplus_tweaks.sh vknotify
+    class main
+    user root
+    group root system
+    disabled
+    oneshot
+
+on property:sys.xdplus.vkcompile=*
+    start xdplus-vknotify
+
+# vkshim's persistent pipeline-cache store. World-writable on purpose: the shim
+# runs inside arbitrary (untrusted) app processes and each writes its own
+# <pkg>.pcache here.
+on post-fs-data
+    mkdir /data/vkshim 0777 root root
+
 # Re-apply persisted toggles once the framework is up.
 service xdplus-tweaks-boot /system/bin/sh /system/etc/xdplus_tweaks.sh boot
     class main
