@@ -74,6 +74,10 @@ hdmi_up() {
 		xlog "trigger_by_vsync=0 (stutter knob)"
 	fi
 
+	# §84: the debugfs nodes can come up 0444, which makes every write below fail
+	# with "Permission denied" even as root.
+	chmod 666 $H /d/dispsys 2>/dev/null
+
 	xlog "kernel bringup (res=$RES)"
 	# No 'disable' step: since §81 the kernel no longer presets is_enabled, so a
 	# single enable runs hdmi_drv_init() and creates hdmi_rdma_config_kthread.
@@ -91,8 +95,12 @@ hdmi_up() {
 			$CTL res "$RES"; sleep 5
 		fi
 		xlog "latch (attempt $try)"
-		service call SurfaceFlinger 1008 i32 1; sleep 8
-		service call SurfaceFlinger 1008 i32 0; sleep 2
+		# MUST be uid 1000 (PORTING_LOG §84): SurfaceFlinger::onTransact rejects debug
+		# codes >= 1000 from any uid but AID_SYSTEM, so running these as root silently
+		# does nothing and prints the easily misread
+		# 'Result: Parcel(Error: 0xffffffffffffffff "Operation not permitted")'.
+		su 1000 -c "service call SurfaceFlinger 1008 i32 1"; sleep 8
+		su 1000 -c "service call SurfaceFlinger 1008 i32 0"; sleep 2
 
 		# CRITICAL ordering (PORTING_LOG §64/§61): only apply the fakecablein shield +
 		# repair trio AFTER confirming the 1008 latch actually put external onto CLIENT
