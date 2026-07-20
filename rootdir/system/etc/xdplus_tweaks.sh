@@ -25,6 +25,13 @@ VBLOB_MD5=54b28199
 xlog() { /system/bin/log -t xdplus_tweaks "$*" 2>/dev/null; echo "xdplus_tweaks: $*"; }
 
 # Apply the persisted un-freeze value to the composer's debug.hwc.is_skip_validate.
+#
+# ⚠️ §83: leave this OFF. is_skip_validate=0 does NOT unfreeze the panel, and it makes
+# a freeze STICKY — it survives HDMI teardown, a composer restart and a full reboot
+# (the boot oneshot re-applies it every boot, so the panel comes back frozen). Recovery
+# is: set persist.sys.xdplus.hdmi_unfreeze 0, clear debug.hwc.is_skip_validate, restart
+# the composer. §64 had already found this prop "makes things worse"; §68 shipped it as
+# a toggle anyway. Do not default it on.
 # We deliberately do NOT poke SurfaceFlinger here: a live `dumpsys SurfaceFlinger`
 # right after flipping is_skip_validate wedges system_server into a reboot on this
 # build. The composer reads the prop naturally at its next deviceDump / on the next
