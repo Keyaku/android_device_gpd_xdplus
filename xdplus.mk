@@ -141,6 +141,11 @@ PRODUCT_PACKAGES += android.hardware.media.omx@1.0-service.xdplus
 # pipelines on a 64 MB stack (DDK 1.9 libusc recursion overflow).
 PRODUCT_PACKAGES += vulkan.mt8173
 
+# mini-HDMI bringup helper (see hdmi/Android.mk). Sends the MTK_HDMI_* ioctls
+# the vendor HWC blob never sends. Baked in so xdplus_tweaks.sh's HDMI actions
+# no longer depend on an artifact hand-pushed to /data/local/tmp (§69).
+PRODUCT_PACKAGES += hdmictl
+
 # Old HIDL libs the vendor audio HAL links against (not installed by default in R)
 PRODUCT_PACKAGES += android.hardware.soundtrigger@2.0 android.hardware.audio.common@2.0-util libaudioroute libaudiospdif
 
