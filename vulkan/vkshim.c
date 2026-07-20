@@ -262,15 +262,104 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 // draw-less render-pass submissions with a wait-idle absorb the loss (20/20
 // clean rounds vs ~50% dirty without). Any failure here aborts the warm-up
 // only — never the app's device creation.
+//
+// v4/v5 STATUS (2026-07-19): the RetroArch renderer-restart WHITE-ICON glitch
+// (glui static mipmapped textures render pure white on every device created
+// after a prior swapchain presented in the process; first init clean; GL
+// restarts clean) is NOT fixed by any warm-up placement tried:
+//   - verified copy round-trips at CreateDevice (plain + semaphore-gated),
+//   - warm-up per swapchain-image import (native-buffer vkCreateImage),
+//   - warm-up at first vkAcquireImageANDROID,
+//   - vkDeviceWaitIdle + 300 ms settle inside vkDestroyDevice.
+// All hooks fired (logcat-confirmed) and every warm-up round-trip verified
+// intact, yet the app's own static-texture content still dies — so this is
+// not a first-submission transfer loss. Offscreen replication of RA's exact
+// STATIC upload recipe (GENERAL-layout copy + mip blits, tools/vkquad/
+// vkstatic) across sequential devices is also clean; the missing repro
+// ingredient is a live swapchain. The hooks are kept: they are fail-open,
+// cheap, and absorb the vkreinit-class first-submission losses.
 
 static PFN_vkCreateDevice real_cdv;
 static PFN_vkGetPhysicalDeviceMemoryProperties real_gpdmp;
+static PFN_vkCreateSwapchainKHR real_csw;
+
+// VK_ANDROID_native_buffer entry point — the loader implements
+// vkCreateSwapchainKHR itself and talks to the driver through this instead.
+typedef VkResult (VKAPI_PTR *PFN_vkAcquireImageANDROID)(VkDevice device,
+	VkImage image, int nativeFenceFd, VkSemaphore semaphore, VkFence fence);
+static PFN_vkAcquireImageANDROID real_acq;
+static PFN_vkCreateImage real_cimg;
+
+// VkNativeBufferANDROID sType — the loader chains this into vkCreateImage for
+// each swapchain image it creates inside its own vkCreateSwapchainKHR.
+#define VKSHIM_STRUCTURE_TYPE_NATIVE_BUFFER_ANDROID 1000010000
+
+// Devices we have seen, so the swapchain hook can re-run the warm-up with the
+// right physical device / queue family. Tiny fixed table; entries recycle.
+#define DEV_TABLE 8
+static struct {
+	VkDevice dev;
+	VkPhysicalDevice pd;
+	uint32_t qfi;
+	int wsi_warmed;
+} dev_table[DEV_TABLE];
+static pthread_mutex_t dev_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static void remember_device(VkDevice dev, VkPhysicalDevice pd, uint32_t qfi) {
+	pthread_mutex_lock(&dev_mu);
+	for (int i = 0; i < DEV_TABLE; i++)
+		if (dev_table[i].dev == dev || dev_table[i].dev == NULL) {
+			dev_table[i].dev = dev;
+			dev_table[i].pd = pd;
+			dev_table[i].qfi = qfi;
+			dev_table[i].wsi_warmed = 0;
+			pthread_mutex_unlock(&dev_mu);
+			return;
+		}
+	dev_table[0].dev = dev;   /* table full: recycle slot 0 */
+	dev_table[0].pd = pd;
+	dev_table[0].qfi = qfi;
+	dev_table[0].wsi_warmed = 0;
+	pthread_mutex_unlock(&dev_mu);
+}
+
+// Returns 1 exactly once per remembered device (and fills pd/qfi).
+static int claim_wsi_warmup(VkDevice dev, VkPhysicalDevice *pd, uint32_t *qfi) {
+	int claimed = 0;
+	pthread_mutex_lock(&dev_mu);
+	for (int i = 0; i < DEV_TABLE; i++)
+		if (dev_table[i].dev == dev) {
+			if (!dev_table[i].wsi_warmed) {
+				dev_table[i].wsi_warmed = 1;
+				*pd = dev_table[i].pd;
+				*qfi = dev_table[i].qfi;
+				claimed = 1;
+			}
+			break;
+		}
+	pthread_mutex_unlock(&dev_mu);
+	return claimed;
+}
+
+static int lookup_device(VkDevice dev, VkPhysicalDevice *pd, uint32_t *qfi) {
+	pthread_mutex_lock(&dev_mu);
+	for (int i = 0; i < DEV_TABLE; i++)
+		if (dev_table[i].dev == dev) {
+			*pd = dev_table[i].pd;
+			*qfi = dev_table[i].qfi;
+			pthread_mutex_unlock(&dev_mu);
+			return 1;
+		}
+	pthread_mutex_unlock(&dev_mu);
+	return 0;
+}
 
 #define WARMUP_ROUNDS 5
+#define COPY_WARMUP_MAX 8
+#define COPY_WARMUP_BYTES (16u * 16u * 4u)
 
-static void warmup_device(VkPhysicalDevice pd, VkDevice dev,
-	const VkDeviceCreateInfo *ci) {
-	if (!real_gdpa || !real_gpdmp || !ci->queueCreateInfoCount) return;
+static void warmup_device(VkPhysicalDevice pd, VkDevice dev, uint32_t qfi) {
+	if (!real_gdpa || !real_gpdmp) return;
 	#define F(name) PFN_vk##name p##name = (PFN_vk##name)real_gdpa(dev, "vk" #name); \
 		if (!p##name) return
 	F(GetDeviceQueue); F(CreateImage); F(GetImageMemoryRequirements);
@@ -280,10 +369,14 @@ static void warmup_device(VkPhysicalDevice pd, VkDevice dev,
 	F(CmdEndRenderPass); F(EndCommandBuffer); F(QueueSubmit); F(QueueWaitIdle);
 	F(DestroyFramebuffer); F(DestroyRenderPass); F(DestroyImageView);
 	F(DestroyImage); F(FreeMemory); F(DestroyCommandPool);
+	F(CreateBuffer); F(GetBufferMemoryRequirements); F(BindBufferMemory);
+	F(MapMemory); F(CmdPipelineBarrier); F(CmdCopyBufferToImage);
+	F(CmdCopyImageToBuffer); F(DestroyBuffer);
+	F(CreateSemaphore); F(DestroySemaphore);
 	#undef F
 
 	VkQueue q;
-	pGetDeviceQueue(dev, ci->pQueueCreateInfos[0].queueFamilyIndex, 0, &q);
+	pGetDeviceQueue(dev, qfi, 0, &q);
 
 	VkImageCreateInfo imci = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -293,7 +386,8 @@ static void warmup_device(VkPhysicalDevice pd, VkDevice dev,
 		.mipLevels = 1, .arrayLayers = 1,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 		.tiling = VK_IMAGE_TILING_OPTIMAL,
-		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+			VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
 	};
 	VkImage img = VK_NULL_HANDLE;
 	VkDeviceMemory mem = VK_NULL_HANDLE;
@@ -372,7 +466,7 @@ static void warmup_device(VkPhysicalDevice pd, VkDevice dev,
 		VkCommandPoolCreateInfo cpci = {
 			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 			.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-			.queueFamilyIndex = ci->pQueueCreateInfos[0].queueFamilyIndex,
+			.queueFamilyIndex = qfi,
 		};
 		if (pCreateCommandPool(dev, &cpci, NULL, &pool) != VK_SUCCESS) goto out;
 		VkCommandBufferAllocateInfo cbai = {
@@ -406,6 +500,146 @@ static void warmup_device(VkPhysicalDevice pd, VkDevice dev,
 			if (pQueueSubmit(q, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS) goto out;
 			pQueueWaitIdle(q);
 		}
+
+		// Transfer-path warm-up: staging -> image -> readback, verified, until
+		// one round-trip survives. Uses its own host-visible buffer; the image
+		// above doubles as the transfer target.
+		{
+			VkBufferCreateInfo bci = {
+				.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+				.size = COPY_WARMUP_BYTES * 2,
+				.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+					VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			};
+			VkBuffer buf = VK_NULL_HANDLE;
+			VkDeviceMemory bmem = VK_NULL_HANDLE;
+			VkSemaphore sem = VK_NULL_HANDLE;
+			uint8_t *map = NULL;
+			if (pCreateBuffer(dev, &bci, NULL, &buf) != VK_SUCCESS) goto copy_out;
+			{
+				VkMemoryRequirements mr;
+				pGetBufferMemoryRequirements(dev, buf, &mr);
+				VkPhysicalDeviceMemoryProperties mp;
+				real_gpdmp(pd, &mp);
+				uint32_t idx = ~0u;
+				for (uint32_t i = 0; i < mp.memoryTypeCount; i++)
+					if ((mr.memoryTypeBits & (1u << i)) &&
+						(mp.memoryTypes[i].propertyFlags &
+							(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+							 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+							(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+							 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+						idx = i;
+						break;
+					}
+				if (idx == ~0u) goto copy_out;
+				VkMemoryAllocateInfo mai = {
+					.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+					.allocationSize = mr.size,
+					.memoryTypeIndex = idx,
+				};
+				if (pAllocateMemory(dev, &mai, NULL, &bmem) != VK_SUCCESS) goto copy_out;
+				if (pBindBufferMemory(dev, buf, bmem, 0) != VK_SUCCESS) goto copy_out;
+				if (pMapMemory(dev, bmem, 0, VK_WHOLE_SIZE, 0, (void **)&map)
+						!= VK_SUCCESS) goto copy_out;
+			}
+			// Two flavors per attempt: a plain submission, then one gated on a
+			// semaphore signaled by an empty submission — RetroArch's real
+			// texture uploads ride frame command buffers that wait on the WSI
+			// acquire semaphore, and the loss window may be semaphore-specific.
+			{
+				VkSemaphoreCreateInfo semci =
+					{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+				pCreateSemaphore(dev, &semci, NULL, &sem);
+			}
+			int survived = -1;
+			for (int a = 0; a < COPY_WARMUP_MAX; a++) {
+				uint8_t pat = (uint8_t)(0xA0 + a);
+				memset(map, pat, COPY_WARMUP_BYTES);
+				memset(map + COPY_WARMUP_BYTES, 0, COPY_WARMUP_BYTES);
+
+				VkCommandBufferBeginInfo bi =
+					{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+				if (pBeginCommandBuffer(cmd, &bi) != VK_SUCCESS) goto copy_out;
+				VkImageMemoryBarrier to_dst = {
+					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+					.srcAccessMask = 0,
+					.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+					.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+					.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+					.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.image = img,
+					.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+				};
+				pCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+					VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &to_dst);
+				VkBufferImageCopy region = {
+					.bufferOffset = 0,
+					.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+					.imageExtent = {16, 16, 1},
+				};
+				pCmdCopyBufferToImage(cmd, buf, img,
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+				VkImageMemoryBarrier to_src = to_dst;
+				to_src.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+				to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+				to_src.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+				to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+				pCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+					VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &to_src);
+				region.bufferOffset = COPY_WARMUP_BYTES;
+				pCmdCopyImageToBuffer(cmd, img,
+					VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &region);
+				if (pEndCommandBuffer(cmd) != VK_SUCCESS) goto copy_out;
+				if (sem != VK_NULL_HANDLE && (a & 1)) {
+					// Odd attempts: gate the copy on a semaphore from an empty
+					// submission, mimicking a WSI-acquire-gated frame buffer.
+					VkSubmitInfo sig = {
+						.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+						.signalSemaphoreCount = 1,
+						.pSignalSemaphores = &sem,
+					};
+					if (pQueueSubmit(q, 1, &sig, VK_NULL_HANDLE) != VK_SUCCESS)
+						goto copy_out;
+					VkPipelineStageFlags ws = VK_PIPELINE_STAGE_TRANSFER_BIT;
+					VkSubmitInfo si = {
+						.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+						.waitSemaphoreCount = 1,
+						.pWaitSemaphores = &sem,
+						.pWaitDstStageMask = &ws,
+						.commandBufferCount = 1,
+						.pCommandBuffers = &cmd,
+					};
+					if (pQueueSubmit(q, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS)
+						goto copy_out;
+				} else {
+					VkSubmitInfo si = {
+						.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+						.commandBufferCount = 1,
+						.pCommandBuffers = &cmd,
+					};
+					if (pQueueSubmit(q, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS)
+						goto copy_out;
+				}
+				pQueueWaitIdle(q);
+
+				int ok = 1;
+				for (uint32_t i = 0; i < COPY_WARMUP_BYTES; i++)
+					if (map[COPY_WARMUP_BYTES + i] != pat) { ok = 0; break; }
+				if (ok && a >= 1) { survived = a; break; }
+				if (!ok) LOGE("copy warm-up: attempt %d dropped", a);
+			}
+			if (survived < 0)
+				LOGE("copy warm-up: no round-trip survived after %d attempts",
+					COPY_WARMUP_MAX);
+			else if (survived > 0)
+				LOGI("copy warm-up: %d dropped round-trip(s) absorbed", survived);
+copy_out:
+			if (sem) pDestroySemaphore(dev, sem, NULL);
+			if (buf) pDestroyBuffer(dev, buf, NULL);
+			if (bmem) pFreeMemory(dev, bmem, NULL);
+		}
 		done = 1;
 	}
 out:
@@ -419,11 +653,90 @@ out:
 	else LOGE("fresh-device warm-up aborted (non-fatal)");
 }
 
+static PFN_vkDestroyDevice real_ddv;
+static PFN_vkDeviceWaitIdle real_dwi;
+
+// RA's renderer restart destroys the old device right before creating the new
+// one. If the blob tears the old device down asynchronously, that teardown can
+// land on memory the new device has already reallocated. Drain the old device
+// and give the worker a beat before letting the app proceed.
+static VKAPI_ATTR void VKAPI_CALL shim_DestroyDevice(VkDevice dev,
+	const VkAllocationCallbacks *ac) {
+	if (real_dwi) real_dwi(dev);
+	real_ddv(dev, ac);
+	usleep(300 * 1000);
+	LOGI("device destroyed (drained + settled)");
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateDevice(VkPhysicalDevice pd,
 	const VkDeviceCreateInfo *ci, const VkAllocationCallbacks *ac, VkDevice *out) {
 	VkResult r = real_cdv(pd, ci, ac, out);
-	if (r == VK_SUCCESS)
-		warmup_device(pd, *out, ci);
+	if (r == VK_SUCCESS && ci->queueCreateInfoCount) {
+		uint32_t qfi = ci->pQueueCreateInfos[0].queueFamilyIndex;
+		remember_device(*out, pd, qfi);
+		warmup_device(pd, *out, qfi);
+	}
+	return r;
+}
+
+// RetroArch's renderer restart loses the FIRST texture uploads submitted
+// after the new swapchain is attached — the CreateDevice-time warm-up is not
+// enough; the blob's loss window re-opens when WSI hooks up to the (reused)
+// ANativeWindow. Re-run the warm-up right after swapchain creation so the
+// sacrificial submissions absorb it instead of the app's uploads.
+// Swapchain images are imported by the loader via vkCreateImage with a
+// VkNativeBufferANDROID chained in, DURING its vkCreateSwapchainKHR — i.e.
+// after these the app records its first uploads. Re-run the warm-up on each
+// such import so the loss window is spent before the app's real work.
+static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateImage(VkDevice dev,
+	const VkImageCreateInfo *ci, const VkAllocationCallbacks *ac, VkImage *out) {
+	VkResult r = real_cimg(dev, ci, ac, out);
+	if (r == VK_SUCCESS) {
+		const VkBaseInStructure *s = (const VkBaseInStructure *)ci->pNext;
+		for (; s; s = s->pNext)
+			if ((int)s->sType == VKSHIM_STRUCTURE_TYPE_NATIVE_BUFFER_ANDROID) {
+				VkPhysicalDevice pd;
+				uint32_t qfi;
+				if (lookup_device(dev, &pd, &qfi)) {
+					LOGI("post-native-image warm-up");
+					warmup_device(pd, dev, qfi);
+				}
+				break;
+			}
+	}
+	return r;
+}
+
+// First acquire per device = the swapchain is attached and the app is about
+// to record/submit its first real frame (where RA's texture uploads ride).
+// Run the warm-up here, after the real acquire, so its sacrificial
+// submissions absorb the reopened loss window.
+static VKAPI_ATTR VkResult VKAPI_CALL shim_AcquireImageANDROID(VkDevice dev,
+	VkImage image, int nativeFenceFd, VkSemaphore semaphore, VkFence fence) {
+	VkResult r = real_acq(dev, image, nativeFenceFd, semaphore, fence);
+	if (r == VK_SUCCESS) {
+		VkPhysicalDevice pd;
+		uint32_t qfi;
+		if (claim_wsi_warmup(dev, &pd, &qfi)) {
+			LOGI("post-WSI-acquire warm-up");
+			warmup_device(pd, dev, qfi);
+		}
+	}
+	return r;
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateSwapchainKHR(VkDevice dev,
+	const VkSwapchainCreateInfoKHR *ci, const VkAllocationCallbacks *ac,
+	VkSwapchainKHR *out) {
+	VkResult r = real_csw(dev, ci, ac, out);
+	if (r == VK_SUCCESS) {
+		VkPhysicalDevice pd;
+		uint32_t qfi;
+		if (lookup_device(dev, &pd, &qfi)) {
+			LOGI("post-swapchain warm-up");
+			warmup_device(pd, dev, qfi);
+		}
+	}
 	return r;
 }
 
@@ -438,6 +751,23 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
 	if (!strcmp(name, "vkCreateComputePipelines")) {
 		if (!real_ccp) real_ccp = (PFN_vkCreateComputePipelines)real_gdpa(dev, name);
 		return real_ccp ? (PFN_vkVoidFunction)shim_CreateComputePipelines : NULL;
+	}
+	if (!strcmp(name, "vkCreateSwapchainKHR")) {
+		if (!real_csw) real_csw = (PFN_vkCreateSwapchainKHR)real_gdpa(dev, name);
+		return real_csw ? (PFN_vkVoidFunction)shim_CreateSwapchainKHR : NULL;
+	}
+	if (!strcmp(name, "vkAcquireImageANDROID")) {
+		if (!real_acq) real_acq = (PFN_vkAcquireImageANDROID)real_gdpa(dev, name);
+		return real_acq ? (PFN_vkVoidFunction)shim_AcquireImageANDROID : NULL;
+	}
+	if (!strcmp(name, "vkCreateImage")) {
+		if (!real_cimg) real_cimg = (PFN_vkCreateImage)real_gdpa(dev, name);
+		return real_cimg ? (PFN_vkVoidFunction)shim_CreateImage : NULL;
+	}
+	if (!strcmp(name, "vkDestroyDevice")) {
+		if (!real_ddv) real_ddv = (PFN_vkDestroyDevice)real_gdpa(dev, name);
+		if (!real_dwi) real_dwi = (PFN_vkDeviceWaitIdle)real_gdpa(dev, "vkDeviceWaitIdle");
+		return real_ddv ? (PFN_vkVoidFunction)shim_DestroyDevice : NULL;
 	}
 	if (!strcmp(name, "vkGetDeviceProcAddr"))
 		return (PFN_vkVoidFunction)shim_GetDeviceProcAddr;
@@ -469,6 +799,23 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetInstanceProcAddr(
 	if (!strcmp(name, "vkCreateComputePipelines")) {
 		if (!real_ccp) real_ccp = (PFN_vkCreateComputePipelines)real_gipa(inst, name);
 		return real_ccp ? (PFN_vkVoidFunction)shim_CreateComputePipelines : NULL;
+	}
+	if (!strcmp(name, "vkCreateSwapchainKHR")) {
+		if (!real_csw) real_csw = (PFN_vkCreateSwapchainKHR)real_gipa(inst, name);
+		return real_csw ? (PFN_vkVoidFunction)shim_CreateSwapchainKHR : NULL;
+	}
+	if (!strcmp(name, "vkAcquireImageANDROID")) {
+		if (!real_acq) real_acq = (PFN_vkAcquireImageANDROID)real_gipa(inst, name);
+		return real_acq ? (PFN_vkVoidFunction)shim_AcquireImageANDROID : NULL;
+	}
+	if (!strcmp(name, "vkCreateImage")) {
+		if (!real_cimg) real_cimg = (PFN_vkCreateImage)real_gipa(inst, name);
+		return real_cimg ? (PFN_vkVoidFunction)shim_CreateImage : NULL;
+	}
+	if (!strcmp(name, "vkDestroyDevice")) {
+		if (!real_ddv) real_ddv = (PFN_vkDestroyDevice)real_gipa(inst, name);
+		if (!real_dwi) real_dwi = (PFN_vkDeviceWaitIdle)real_gipa(inst, "vkDeviceWaitIdle");
+		return real_ddv ? (PFN_vkVoidFunction)shim_DestroyDevice : NULL;
 	}
 	return real_gipa(inst, name);
 }
