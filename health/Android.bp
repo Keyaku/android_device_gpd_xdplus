@@ -1,0 +1,30 @@
+// System-side, self-contained health@2.1 HAL (PORTING_LOG §45 boot-time cure).
+// The 8.1 vendor ships no health HAL; in normal boot nothing registers IHealth
+// and BatteryService stalls ~4 s on getService. This registers the default
+// health impl in-process (no vendor passthrough -impl .so — see service.cpp for
+// why the stock wrapper+dlopen split can't be used on this system-as-root
+// device). Built for core/system (no `vendor: true`), mirroring the
+// configstore/dumpstate .xdplus backup services. No vintf_fragments: VINTF is
+// unenforced here (§39) and getService resolves via registerAsService, exactly
+// like the other .xdplus services.
+cc_binary {
+	name: "android.hardware.health@2.1-service.xdplus",
+	relative_install_path: "hw",
+	init_rc: ["android.hardware.health@2.1-service.xdplus.rc"],
+	srcs: ["service.cpp"],
+	shared_libs: [
+		"libbase",
+		"libcutils",
+		"libhidlbase",
+		"liblog",
+		"libutils",
+		"android.hardware.health@2.1",
+		"android.hardware.health@2.0",
+	],
+	static_libs: [
+		"android.hardware.health@1.0-convert",
+		"libbatterymonitor",
+		"libhealthloop",
+		"libhealth2impl",
+	],
+}

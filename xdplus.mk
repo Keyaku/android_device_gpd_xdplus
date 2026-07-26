@@ -105,10 +105,16 @@ PRODUCT_PACKAGES += libhwbinder libhidltransport
 # CallStack shim for vendor graphics blobs (see shims/Android.bp + TARGET_LD_SHIM_LIBS)
 PRODUCT_PACKAGES += libshim_callstack libshim_logbase libshim_audio libshim_wifi libshim_broadcastradio libshim_ui_codec
 
-# Legacy system-side health@2.0 ("backup" instance) — the 8.1 vendor has no
-# health HAL and BatteryService crashes system_server without one. Reference
-# system ships healthd + manifest_healthd.xml the same way.
+# Health HAL. The 8.1 vendor ships no health HAL. healthd stays as the
+# charger-mode battery service (init.mt8173.rc `service battery_charger /charger`,
+# `class charger`) — offline charging only, normal boot never starts it.
 PRODUCT_PACKAGES += healthd
+# Normal-boot health@2.1: without a registered IHealth, BatteryService stalls
+# ~4 s on getService before falling back (§45, largest single boot-time item).
+# Self-contained system-side service (health/service.cpp) — registers the default
+# health impl in-process, no vendor passthrough .so (§46). `class hal` only, so it
+# never coexists with the charger-mode healthd above.
+PRODUCT_PACKAGES += android.hardware.health@2.1-service.xdplus
 
 # LAN OTA trust anchor (docs/OTA_HOSTING.md "Option A"). The Updater talks HTTPS
 # to the LAN box (ota.example.com:1443); its server cert is issued by our own CA
