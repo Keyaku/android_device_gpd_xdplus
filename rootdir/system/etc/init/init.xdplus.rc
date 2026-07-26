@@ -74,7 +74,7 @@ on post-fs-data
 
 # Driver power-save causes the AP to low-ack-kick the device under sustained
 # transfer load (PORTING_LOG §44/§49) — `iw dev wlan0 set power_save off`
-# proved necessary live. The real fix is patch 0012 (+
+# proved necessary live. The real fix is patch 0011 (+
 # persist.sys.wifi_ps_pin_off in system.prop): the framework re-enables
 # power-save through ClientModeImpl.setPowerSave after every DHCP, so any
 # one-shot write gets overridden. This trigger only covers the raw driver
