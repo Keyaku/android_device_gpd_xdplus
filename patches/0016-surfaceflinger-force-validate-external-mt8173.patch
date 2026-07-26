@@ -1,0 +1,32 @@
+diff --git a/services/surfaceflinger/DisplayHardware/HWComposer.cpp b/services/surfaceflinger/DisplayHardware/HWComposer.cpp
+index 7a2f0f34ee..5c96310586 100644
+--- a/services/surfaceflinger/DisplayHardware/HWComposer.cpp
++++ b/services/surfaceflinger/DisplayHardware/HWComposer.cpp
+@@ -29,6 +29,7 @@
+ #include <compositionengine/Output.h>
+ #include <compositionengine/OutputLayer.h>
+ #include <compositionengine/impl/OutputLayerCompositionState.h>
++#include <cutils/properties.h>
+ #include <log/log.h>
+ #include <ui/DebugUtils.h>
+ #include <ui/GraphicBuffer.h>
+@@ -504,8 +505,18 @@ status_t HWComposer::getDeviceCompositionChanges(
+     // composition.  When there is client composition, since we haven't
+     // rendered to the client target yet, we should not attempt to skip
+     // validate.
++    // The MTK hwcomposer blob answers presentOrValidate() for an external display
++    // with "present succeeded" while it has internally marked every layer CLIENT.
++    // SF therefore never validates, never learns about the change, and never
++    // renders a client target, so HWC bypasses the display forever
++    // ("[JOB] (1) SET/bypass/no layers") and the monitor stays dark. Take the slow
++    // validate/present path for external displays.
++    const bool forceValidate = !displayData.isVirtual &&
++            getDisplayConnectionType(displayId) == DisplayConnectionType::External &&
++            property_get_bool("persist.sys.xdplus.hdmi_force_validate", 1);
++
+     displayData.validateWasSkipped = false;
+-    if (!frameUsesClientComposition) {
++    if (!frameUsesClientComposition && !forceValidate) {
+         sp<Fence> outPresentFence;
+         uint32_t state = UINT32_MAX;
+         error = hwcDisplay->presentOrValidate(&numTypes, &numRequests, &outPresentFence , &state);
