@@ -77,6 +77,11 @@ ril.radiooff.poweroffMD=0
 
 persist.sys.flat_rotation=1
 
+# LAN OTA server for the LineageOS Updater (docs/OTA_HOSTING.md "Option A").
+# HTTPS on a dedicated non-443 port; server cert issued by our CA baked into the
+# system trust store (xdplus.mk). App substitutes {device}/{type}/{incr}.
+lineage.updater.uri=https://ota.example.com:1443/api/v1/{device}/{type}/{incr}
+
 # MTK gen2 driver mishandles 802.11 power-save: APs low-ack-kick the device
 # mid-transfer (PORTING_LOG §44/§49). Patch 0012 pins framework power-save off
 # when this is set; init.xdplus.rc covers the raw driver default at load time.
