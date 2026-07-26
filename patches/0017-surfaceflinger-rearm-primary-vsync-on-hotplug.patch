@@ -1,0 +1,76 @@
+From 9db4114527a0250ca241f8fdc154d247e09a9f1f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 26 Jul 2026 15:15:49 +0100
+Subject: [PATCH] SurfaceFlinger: re-arm the primary display's HWC vsync after
+ a hotplug
+
+setPrimaryVsyncEnabledInternal() stores mHWCVsyncPendingState but only pushes it
+to HWC while the internal display exists and is powered on, and nothing
+re-applies it afterwards except an OFF -> ON power transition. On the GPD XD+ an
+external hotplug (the mini-HDMI mirror) can leave the composer with vsync
+generation stopped while SF still believes it is enabled: SF then dispatches no
+vsync, composes nothing, and both displays freeze with the hardware still
+scanning out. Measured in that state: "mLastDispatchTime: 43368 ms ago", the
+composer's VSyncThread_0 parked in futex instead of waiting on kernel vsync, and
+only a screen off/on cycle recovering it.
+
+Since HWComposer::setVsyncEnabled() early-returns when the request matches its
+cached value, a plain re-request cannot resynchronize a composer that stopped
+silently, so force DISABLE then restore the pending state.
+
+Necessary but NOT sufficient on its own: the vendor composer clears display 1's
+internal connected flag asynchronously, after hotplug processing has finished, so
+this re-arm can fire before vsync is actually dropped. A timer-driven watchdog is
+the planned follow-up; this closes the "pending state is never re-applied" hole
+regardless.
+
+Changes:
+- Force a DISABLE -> pending-state transition on the internal display's HWC vsync at the end of processDisplayHotplugEventsLocked()
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: I2cb7cc5ae830744597f5556fdbac63c758d08c16
+---
+ services/surfaceflinger/SurfaceFlinger.cpp | 27 ++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/services/surfaceflinger/SurfaceFlinger.cpp b/services/surfaceflinger/SurfaceFlinger.cpp
+index 878761b077..dcb2b27117 100644
+--- a/services/surfaceflinger/SurfaceFlinger.cpp
++++ b/services/surfaceflinger/SurfaceFlinger.cpp
+@@ -2498,6 +2498,33 @@ void SurfaceFlinger::processDisplayHotplugEventsLocked() {
+     }
+ 
+     mPendingHotplugEvents.clear();
++
++    // GPD XD+ (§102): re-arm the primary display's HWC vsync after any hotplug.
++    //
++    // setPrimaryVsyncEnabledInternal() stores mHWCVsyncPendingState but only
++    // pushes it to HWC when the internal display exists and is powered on, and
++    // nothing re-applies it afterwards except an OFF -> ON power transition. An
++    // external hotplug (the mini-HDMI mirror coming or going) can leave the
++    // composer with vsync generation stopped while SF still believes it is
++    // enabled: SF then dispatches no vsync at all, composes nothing, and BOTH
++    // displays freeze with the hardware still scanning out. Measured in that
++    // state: "mLastDispatchTime: 43368 ms ago", the composer's VSyncThread_0
++    // parked in futex rather than waiting on kernel vsync, and only an
++    // off/on screen cycle recovering it.
++    //
++    // HWComposer::setVsyncEnabled() early-returns when the requested state
++    // matches its cached value, so a plain re-request cannot resynchronize a
++    // composer that has silently stopped. Force the transition instead: drop to
++    // DISABLE and immediately restore the pending state, which makes HWC issue
++    // both calls for real.
++    if (const auto displayId = getInternalDisplayIdLocked()) {
++        const sp<DisplayDevice> display = getDefaultDisplayDeviceLocked();
++        if (display && display->isPoweredOn() &&
++            mHWCVsyncPendingState == hal::Vsync::ENABLE) {
++            getHwComposer().setVsyncEnabled(*displayId, hal::Vsync::DISABLE);
++            getHwComposer().setVsyncEnabled(*displayId, hal::Vsync::ENABLE);
++        }
++    }
+ }
+ 
+ void SurfaceFlinger::dispatchDisplayHotplugEvent(PhysicalDisplayId displayId, bool connected) {
+-- 
+2.55.0
+
