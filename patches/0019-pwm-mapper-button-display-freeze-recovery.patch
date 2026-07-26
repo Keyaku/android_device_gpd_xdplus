@@ -1,4 +1,4 @@
-From 19f5c42289532f61be29914c3cfa6bb719d1e178 Mon Sep 17 00:00:00 2001
+From 08030fdbe4432834126b3cc3bbcdc34054fe5417 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
 Date: Sun, 26 Jul 2026 16:03:11 +0100
 Subject: [PATCH] PhoneWindowManager: bind the spare Mapper button to a
@@ -19,36 +19,46 @@ the otherwise unused F12 in mtk-kpd.kl as a neutral interception anchor, so
 nothing has to be suppressed. Off by default; the GPD XD+ settings screen arms it
 via persist.sys.xdplus.hdmi_recovery_key, which is read per press.
 
-Verified: with the toggle off the key does nothing; with it on, one press logs
-"Going to sleep due to power_button" then "Waking up ... XDPLUS_RECOVERY" 700 ms
-later, and a frozen mirror session goes from zero display triggers back to 36-44
-posts/s.
+Verified: with the toggle off, or with no HDMI cable attached, the key does
+nothing at all. When armed with a cable present, one press logs "Going to sleep
+due to power_button" then "Waking up ... XDPLUS_RECOVERY" 700 ms later, and a
+frozen mirror session goes from zero display triggers back to 36-44 posts/s.
+Confirmed on the physical button, not just an injected keycode. The bounce
+revives the panel only, so the bring-up is re-dispatched afterwards to bring the
+mirror back as well (that half is not yet verified end to end: HDMI bring-up
+itself still crashes system_server on some boots, which is a separate defect).
 
 Changes:
 - Intercept `KEYCODE_F12` in `interceptKeyBeforeQueueing()`: on the initial down, when armed, consume the event, sleep the display and wake it again after `XDPLUS_RECOVERY_WAKE_DELAY_MS` (700 ms, so the composer actually tears down in between rather than the wake racing the sleep)
+- Gate on `isXdplusHdmiCablePresent()` reading the extcon switch, so the button is a no-op with nothing plugged in and cannot sleep the device on a stray press; the check fails OPEN, because losing the only recovery from a frozen screen is worse than an occasional stray bounce
+- Re-dispatch the mirror bring-up `XDPLUS_RECOVERY_HDMI_UP_DELAY_MS` (3 s) after the wake via the existing `sys.xdplus.action=hdmi_up` init hook, since the bounce alone leaves the external session dormant
 
 Co-authored-by: Claude <noreply@anthropic.com>
-Change-Id: I4b2c2c0a00a972305c64b1bf69d9fa8f78a789da
+Change-Id: I44b5baf4e0c90de515164c655852ccf159e68603
 ---
- .../server/policy/PhoneWindowManager.java     | 40 +++++++++++++++++++
- 1 file changed, 40 insertions(+)
+ .../server/policy/PhoneWindowManager.java     | 76 +++++++++++++++++++
+ 1 file changed, 76 insertions(+)
 
 diff --git a/services/core/java/com/android/server/policy/PhoneWindowManager.java b/services/core/java/com/android/server/policy/PhoneWindowManager.java
-index 28724e2e..bc5e485d 100644
+index 28724e2e..1c40c8d0 100644
 --- a/services/core/java/com/android/server/policy/PhoneWindowManager.java
 +++ b/services/core/java/com/android/server/policy/PhoneWindowManager.java
-@@ -307,6 +307,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
+@@ -307,6 +307,14 @@ public class PhoneWindowManager implements WindowManagerPolicy {
      static final int DOUBLE_TAP_HOME_NOTHING = 0;
      static final int DOUBLE_TAP_HOME_RECENT_SYSTEM_UI = 1;
  
 +    // GPD XD+ (§104): delay between the sleep and the wake of the spare-button
 +    // display-freeze recovery, so the composer actually tears down in between.
 +    static final long XDPLUS_RECOVERY_WAKE_DELAY_MS = 700;
++    // GPD XD+ (§105): the bounce revives the panel but not the mirror, so the
++    // bring-up is re-dispatched afterwards — late enough for the framework to have
++    // settled after the wake.
++    static final long XDPLUS_RECOVERY_HDMI_UP_DELAY_MS = 3000;
 +
      static final int SHORT_PRESS_WINDOW_NOTHING = 0;
      static final int SHORT_PRESS_WINDOW_PICTURE_IN_PICTURE = 1;
  
-@@ -4583,6 +4587,42 @@ public class PhoneWindowManager implements WindowManagerPolicy {
+@@ -4583,6 +4591,52 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                  break;
              }
  
@@ -69,7 +79,8 @@ index 28724e2e..bc5e485d 100644
 +                // Off by default; the GPD XD+ settings screen arms it.
 +                if (down && event.getRepeatCount() == 0
 +                        && SystemProperties.getBoolean(
-+                                "persist.sys.xdplus.hdmi_recovery_key", false)) {
++                                "persist.sys.xdplus.hdmi_recovery_key", false)
++                        && isXdplusHdmiCablePresent()) {
 +                    result &= ~ACTION_PASS_TO_USER;
 +                    isWakeKey = false;
 +                    Slog.i(TAG, "XD+ recovery key: bouncing the display off/on");
@@ -84,6 +95,15 @@ index 28724e2e..bc5e485d 100644
 +                                    PowerManager.WAKE_REASON_POWER_BUTTON,
 +                                    "android.policy:XDPLUS_RECOVERY"),
 +                            XDPLUS_RECOVERY_WAKE_DELAY_MS);
++                    // The bounce revives the built-in panel but leaves the
++                    // external session dormant, so the mirror has to be brought
++                    // up again — re-run the bring-up through the existing init
++                    // dispatch (init.xdplus.rc: on property:sys.xdplus.action).
++                    // Delayed well past the wake so the framework has settled
++                    // before hdmictl starts poking the display path.
++                    mHandler.postDelayed(
++                            () -> SystemProperties.set("sys.xdplus.action", "hdmi_up"),
++                            XDPLUS_RECOVERY_HDMI_UP_DELAY_MS);
 +                }
 +                break;
 +            }
@@ -91,6 +111,35 @@ index 28724e2e..bc5e485d 100644
              case KeyEvent.KEYCODE_MEDIA_PLAY:
              case KeyEvent.KEYCODE_MEDIA_PAUSE:
              case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+@@ -5234,6 +5288,28 @@ public class PhoneWindowManager implements WindowManagerPolicy {
+         }
+     }
+ 
++    /**
++     * GPD XD+ (§105): is an HDMI cable/monitor attached?
++     *
++     * The Mapper-button recovery only exists to repair a mirror-induced display
++     * freeze, so with nothing plugged in the button must stay a no-op rather than
++     * sleeping the device on a stray press. The extcon switch reports HPD, and it
++     * still reads 1 while the pipeline is frozen, which is exactly when the button
++     * is needed.
++     *
++     * Fails OPEN: if the node cannot be read, allow the recovery. Losing the only
++     * recovery from a frozen screen is far worse than an occasional stray bounce.
++     */
++    private boolean isXdplusHdmiCablePresent() {
++        try (FileReader in = new FileReader("/sys/class/switch/hdmi/state")) {
++            final int c = in.read();
++            return c != '0';
++        } catch (Exception e) {
++            Slog.w(TAG, "XD+ recovery key: cannot read HDMI switch state, allowing", e);
++            return true;
++        }
++    }
++
+     private void wakeUpFromPowerKey(long eventTime) {
+         wakeUp(eventTime, mAllowTheaterModeWakeFromPowerKey,
+                 PowerManager.WAKE_REASON_POWER_BUTTON, "android.policy:POWER");
 -- 
 2.55.0
 
