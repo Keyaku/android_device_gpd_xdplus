@@ -110,6 +110,14 @@ PRODUCT_PACKAGES += libshim_callstack libshim_logbase libshim_audio libshim_wifi
 # system ships healthd + manifest_healthd.xml the same way.
 PRODUCT_PACKAGES += healthd
 
+# LAN OTA trust anchor (docs/OTA_HOSTING.md "Option A"). The Updater talks HTTPS
+# to the LAN box (ota.example.com:1443); its server cert is issued by our own CA
+# (scripts/ota_ca_setup.sh). Bake the CA's PUBLIC cert into the system trust
+# store so the device validates that TLS with no cleartext exception. Wildcard =
+# auto-pick whatever <subject_hash_old>.0 the setup script drops in ota/cacerts/
+# (empty + harmless until it's run).
+PRODUCT_COPY_FILES += $(foreach c,$(wildcard device/gpd/xdplus/ota/cacerts/*.0),$(c):$(TARGET_COPY_OUT_SYSTEM)/etc/security/cacerts/$(notdir $(c)))
+
 # System_ext keymaster + gatekeeper (see keymaster/Android.bp).
 # - keymaster@3.0-service.xdplus: binderized, TEE-backed (wraps trustlet HAL
 #   keystore.mt8173.so via the now-loadable vendor impl; PORTING_LOG §29+§30).
