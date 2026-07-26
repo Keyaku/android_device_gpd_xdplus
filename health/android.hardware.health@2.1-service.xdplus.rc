@@ -1,0 +1,6 @@
+service health-hal-system /system/bin/hw/android.hardware.health@2.1-service.xdplus
+    class hal
+    user system
+    group system
+    capabilities WAKE_ALARM
+    file /dev/kmsg w
