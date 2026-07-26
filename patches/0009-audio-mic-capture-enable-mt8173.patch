@@ -1,5 +1,5 @@
 diff --git a/media/libaudiohal/impl/DeviceHalHidl.cpp b/media/libaudiohal/impl/DeviceHalHidl.cpp
-index 7d0d83d..5f6780b 100644
+index 7d0d83d..8fa3936 100644
 --- a/media/libaudiohal/impl/DeviceHalHidl.cpp
 +++ b/media/libaudiohal/impl/DeviceHalHidl.cpp
 @@ -314,7 +314,16 @@ status_t DeviceHalHidl::openInputStream(
@@ -14,14 +14,14 @@ index 7d0d83d..5f6780b 100644
 +    // start -38). Report no HAL patch support so AF uses software patches
 +    // (setParameters "routing=" -> audio_route) for every path — the routing
 +    // mode this legacy HAL natively shipped in. See
-+    // device/gpd/xdplus/patches/0010.
++    // device/gpd/xdplus/patches/0009.
 +    *supportsPatches = false;
 +    return OK;
  }
  
  status_t DeviceHalHidl::createAudioPatch(
 diff --git a/services/audioflinger/Threads.cpp b/services/audioflinger/Threads.cpp
-index f9a1d9c..5b617b1 100644
+index f9a1d9c..aa29e43 100644
 --- a/services/audioflinger/Threads.cpp
 +++ b/services/audioflinger/Threads.cpp
 @@ -8594,7 +8594,16 @@ status_t AudioFlinger::RecordThread::createAudioPatch_l(const struct audio_patch
@@ -36,7 +36,7 @@ index f9a1d9c..5b617b1 100644
 +        // MT8173 frozen-8.1 vendor HAL rejects, so setParameters() returns
 +        // -EINVAL and startInput() fails with -22 (all recording dead). Only
 +        // seed the address when it is a real key=value (a2dp/usb/submix).
-+        // See device/gpd/xdplus/patches/0015.
++        // See device/gpd/xdplus/patches/0009.
 +        AudioParameter param = (strchr(address, '=') != nullptr) ?
 +                AudioParameter(String8(address)) : AudioParameter();
          free(address);
@@ -49,7 +49,7 @@ index f9a1d9c..5b617b1 100644
 -        AudioParameter param = AudioParameter(String8(address));
 +        // xdplus: skip bare (no "key=value") mic addresses like "bottom" that
 +        // the MT8173 vendor HAL rejects -> setParameters() -EINVAL -> AAudio
-+        // (MMAP) startInput() -22. See device/gpd/xdplus/patches/0015.
++        // (MMAP) startInput() -22. See device/gpd/xdplus/patches/0009.
 +        AudioParameter param = (strchr(address, '=') != nullptr) ?
 +                AudioParameter(String8(address)) : AudioParameter();
          free(address);

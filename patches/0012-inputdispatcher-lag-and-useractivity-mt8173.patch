@@ -1,12 +1,12 @@
 diff --git a/services/inputflinger/dispatcher/InputDispatcher.cpp b/services/inputflinger/dispatcher/InputDispatcher.cpp
-index ab1c132da1..be0a2d9f3f 100644
+index ab1c132da1..ac35399499 100644
 --- a/services/inputflinger/dispatcher/InputDispatcher.cpp
 +++ b/services/inputflinger/dispatcher/InputDispatcher.cpp
 @@ -433,6 +433,21 @@ status_t InputDispatcher::start() {
      }
      mThread = std::make_unique<InputThread>(
              "InputDispatcher", [this]() { dispatchOnce(); }, [this]() { mLooper->wake(); });
-+    // GPD XD+ (patch 0016): dedicated thread that absorbs the blocking power-HAL
++    // GPD XD+ (patch 0012): dedicated thread that absorbs the blocking power-HAL
 +    // poke off the RT dispatcher thread. Its wake callback flags it for exit and
 +    // signals the condvar it sleeps on.
 +    {
@@ -74,7 +74,7 @@ index ab1c132da1..be0a2d9f3f 100644
 -        const KeyEntry* keyEntry = static_cast<const KeyEntry*>(eventEntry);
 -        commandEntry->keyEntry = const_cast<KeyEntry*>(keyEntry);
 -        keyEntry->refCount += 1;
-+    // GPD XD+ (patch 0016): hand the poke off to mUserActivityPokeThread instead
++    // GPD XD+ (patch 0012): hand the poke off to mUserActivityPokeThread instead
 +    // of calling mPolicy->pokeUserActivity() on this (RT) InputDispatcher thread.
 +    // The poke bottoms out in a synchronous power-HAL binder call
 +    // (sendPowerHint INTERACTION) that stalls ~1s on the 3.18.79+ kernel; doing
@@ -121,14 +121,14 @@ index ab1c132da1..be0a2d9f3f 100644
  
  void InputDispatcher::prepareDispatchCycleLocked(nsecs_t currentTime,
 diff --git a/services/inputflinger/dispatcher/InputDispatcher.h b/services/inputflinger/dispatcher/InputDispatcher.h
-index bf93d737fa..95efc3cc24 100644
+index bf93d737fa..60d893820e 100644
 --- a/services/inputflinger/dispatcher/InputDispatcher.h
 +++ b/services/inputflinger/dispatcher/InputDispatcher.h
 @@ -141,6 +141,24 @@ private:
  
      std::unique_ptr<InputThread> mThread;
  
-+    // GPD XD+ (patch 0016): pokeUserActivity() ultimately makes a synchronous
++    // GPD XD+ (patch 0012): pokeUserActivity() ultimately makes a synchronous
 +    // power-HAL binder call (sendPowerHint INTERACTION) that blocks ~1s on this
 +    // device's 3.18.79+ kernel. Doing it on the RT InputDispatcher thread was the
 +    // input-lag cause; patch 0014 stubbed the poke out entirely, which also
