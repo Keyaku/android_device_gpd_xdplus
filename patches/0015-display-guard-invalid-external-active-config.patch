@@ -1,0 +1,38 @@
+diff --git a/services/core/java/com/android/server/display/LocalDisplayAdapter.java b/services/core/java/com/android/server/display/LocalDisplayAdapter.java
+index 2c08420a..8f4f0857 100644
+--- a/services/core/java/com/android/server/display/LocalDisplayAdapter.java
++++ b/services/core/java/com/android/server/display/LocalDisplayAdapter.java
+@@ -502,7 +502,13 @@ final class LocalDisplayAdapter extends DisplayAdapter {
+         @Override
+         public DisplayDeviceInfo getDisplayDeviceInfoLocked() {
+             if (mInfo == null) {
+-                SurfaceControl.DisplayConfig config = mDisplayConfigs[mActiveConfigId];
++                // MT8173/HDMI: mActiveConfigId can be a negative error code echoed back by
++                // SurfaceControl.getActiveConfig() for a torn-down external display. Fall
++                // back to the default config rather than crashing system_server here.
++                final int configId =
++                        (mActiveConfigId >= 0 && mActiveConfigId < mDisplayConfigs.length)
++                                ? mActiveConfigId : 0;
++                SurfaceControl.DisplayConfig config = mDisplayConfigs[configId];
+                 mInfo = new DisplayDeviceInfo();
+                 mInfo.width = config.width;
+                 mInfo.height = config.height;
+@@ -961,6 +967,18 @@ final class LocalDisplayAdapter extends DisplayAdapter {
+         }
+ 
+         private int findMatchingModeIdLocked(int configId) {
++            // MT8173/HDMI: SurfaceControl.getActiveConfig() can return a negative error
++            // code (or a stale index) for an external display whose HWC path was torn
++            // down by an HPD bounce between registration and this call. Indexing
++            // mDisplayConfigs with it throws ArrayIndexOutOfBoundsException on the
++            // android.display thread, which kills system_server. Treat an out-of-range
++            // config as "unknown mode" — the caller already handles NO_DISPLAY_MODE_ID
++            // by flagging mActiveModeInvalid.
++            if (configId < 0 || configId >= mDisplayConfigs.length) {
++                Slog.w(TAG, "findMatchingModeIdLocked: config id out of range, configId="
++                        + configId + ", configs=" + mDisplayConfigs.length);
++                return NO_DISPLAY_MODE_ID;
++            }
+             SurfaceControl.DisplayConfig config = mDisplayConfigs[configId];
+             for (int i = 0; i < mSupportedModes.size(); i++) {
+                 DisplayModeRecord record = mSupportedModes.valueAt(i);
