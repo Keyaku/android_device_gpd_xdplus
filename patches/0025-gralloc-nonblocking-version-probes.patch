@@ -1,0 +1,81 @@
+From 398f92efb659769dd3593900cc0eb9d1d646bd4a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 27 Jul 2026 23:18:33 +0100
+Subject: [PATCH] gralloc: do not block on speculative mapper/allocator version
+ probes
+
+GraphicBufferMapper walks gralloc 4 -> 3 -> 2 and only one rung is the
+real one; this device is gralloc2, so the 4.x and 3.x probes were pure
+wait, paid once per process. They were the single most repeated
+absent-HAL lookup on the device -- 10 of 63 waits in a boot, across five
+processes.
+
+A device that ships mapper/allocator 4.x or 3.x has it in the manifest
+and running by the time this is reached, so the probes have nothing to
+block for. The gralloc2 rung keeps its blocking getService().
+
+Changes:
+- Use `tryGetService()` in the `Gralloc4Mapper`/`Gralloc4Allocator` and `Gralloc3Mapper`/`Gralloc3Allocator` constructors.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: Ib3e4ece125003b9ef4e381cfddb667766640de7f
+---
+ libs/ui/Gralloc3.cpp |  6 ++++--
+ libs/ui/Gralloc4.cpp | 10 ++++++++--
+ 2 files changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/libs/ui/Gralloc3.cpp b/libs/ui/Gralloc3.cpp
+index 4a8a4d09d3..02c764acf1 100644
+--- a/libs/ui/Gralloc3.cpp
++++ b/libs/ui/Gralloc3.cpp
+@@ -85,7 +85,8 @@ void Gralloc3Mapper::preload() {
+ }
+ 
+ Gralloc3Mapper::Gralloc3Mapper() {
+-    mMapper = IMapper::getService();
++    // Speculative version probe -- see Gralloc4Mapper's constructor.
++    mMapper = IMapper::tryGetService();
+     if (mMapper == nullptr) {
+         ALOGW("mapper 3.x is not supported");
+         return;
+@@ -348,7 +349,8 @@ status_t Gralloc3Mapper::isSupported(uint32_t width, uint32_t height, android::P
+ }
+ 
+ Gralloc3Allocator::Gralloc3Allocator(const Gralloc3Mapper& mapper) : mMapper(mapper) {
+-    mAllocator = IAllocator::getService();
++    // Speculative version probe -- see Gralloc4Mapper's constructor.
++    mAllocator = IAllocator::tryGetService();
+     if (mAllocator == nullptr) {
+         ALOGW("allocator 3.x is not supported");
+         return;
+diff --git a/libs/ui/Gralloc4.cpp b/libs/ui/Gralloc4.cpp
+index b08241fce6..1f0fdc35bd 100644
+--- a/libs/ui/Gralloc4.cpp
++++ b/libs/ui/Gralloc4.cpp
+@@ -94,7 +94,12 @@ void Gralloc4Mapper::preload() {
+ }
+ 
+ Gralloc4Mapper::Gralloc4Mapper() {
+-    mMapper = IMapper::getService();
++    // Speculative version probe: GraphicBufferMapper walks 4 -> 3 -> 2 and only
++    // one of them is the real gralloc. A device that ships mapper 4.x has it in
++    // the manifest and running, so there is nothing to block for here -- while a
++    // device that does not (this one is gralloc2) would otherwise pay the
++    // service-lookup wait once per process before falling back.
++    mMapper = IMapper::tryGetService();
+     if (mMapper == nullptr) {
+         ALOGI("mapper 4.x is not supported");
+         return;
+@@ -1057,7 +1062,8 @@ std::string Gralloc4Mapper::dumpBuffers(bool less) const {
+ }
+ 
+ Gralloc4Allocator::Gralloc4Allocator(const Gralloc4Mapper& mapper) : mMapper(mapper) {
+-    mAllocator = IAllocator::getService();
++    // Speculative version probe -- see Gralloc4Mapper's constructor.
++    mAllocator = IAllocator::tryGetService();
+     if (mAllocator == nullptr) {
+         ALOGW("allocator 3.x is not supported");
+         return;
+-- 
+2.55.0
+
