@@ -1,4 +1,4 @@
-From cfafe8db93ecbb02fda4052cca4dacb6eccff4de Mon Sep 17 00:00:00 2001
+From 871085cdafb2e27b2f7d68e4b2c712f6642a0789 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
 Date: Mon, 27 Jul 2026 20:35:31 +0100
 Subject: [PATCH] apexer: pin mke2fs to the tree's mke2fs.conf
@@ -10,23 +10,27 @@ use, so it reads the build host's /etc/mke2fs.conf. e2fsprogs 1.47+ lists
   Invalid filesystem option set: has_journal,...,orphan_file
 
 which fails com.android.art.release.apex.unsigned and so the whole build, on
-any host with a current e2fsprogs. The tree ships its own mke2fs.conf next to
-the mke2fs binary in APEXER_TOOL_PATH; use that.
+any host with a current e2fsprogs.
+
+The conf is not next to the binary: mke2fs resolves out of APEXER_TOOL_PATH
+(out/soong/host/linux-x86/bin) while soong installs mke2fs.conf to
+$HOST_OUT/bin, so several locations are tried before giving up.
 
 Changes:
-- Set `MKE2FS_CONFIG` for the payload `mke2fs` call, resolved next to the mke2fs binary, and left alone if that file is missing.
+- Set `MKE2FS_CONFIG` for the payload `mke2fs` call, searching the mke2fs directory, `APEXER_TOOL_PATH`, `$HOST_OUT/bin` and the `system/extras/ext4_utils` source copy.
+- Warn instead of failing silently when no conf is found, since the fallback is exactly the broken host config.
 
 Co-authored-by: Claude <noreply@anthropic.com>
-Change-Id: Ie4f33122eb0520951647f91706922c88667764a3
+Change-Id: I4b9173c5e8e6a7792e357087411625a93a72ec0c
 ---
- apexer/apexer.py | 12 +++++++++++-
- 1 file changed, 11 insertions(+), 1 deletion(-)
+ apexer/apexer.py | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
 
 diff --git a/apexer/apexer.py b/apexer/apexer.py
-index f698c8c..868a2ea 100644
+index f698c8c..81e3ed9 100644
 --- a/apexer/apexer.py
 +++ b/apexer/apexer.py
-@@ -499,7 +499,17 @@ def CreateApex(args, work_dir):
+@@ -499,7 +499,29 @@ def CreateApex(args, work_dir):
      cmd.extend(['-E', 'hash_seed=' + uu])
      cmd.append(img_file)
      cmd.append(str(size_in_mb) + 'M')
@@ -36,11 +40,23 @@ index f698c8c..868a2ea 100644
 +    # back to the *host's* /etc/mke2fs.conf; on e2fsprogs 1.47+ that lists
 +    # `orphan_file` among the ext4 features, which 1.45.4 rejects outright with
 +    # "Invalid filesystem option set: ...,orphan_file", failing the ART apex.
++    # The conf is not necessarily next to the binary: mke2fs resolves out of
++    # APEXER_TOOL_PATH (out/soong/host/linux-x86/bin) while soong installs
++    # mke2fs.conf to $HOST_OUT/bin, so search both and fall back to the source
++    # tree, which is always present relative to the build top we run from.
 +    mke2fs_env = {'E2FSPROGS_FAKE_TIME': '1'}
-+    mke2fs_conf = os.path.join(
-+        os.path.dirname(FindBinaryPath('mke2fs')), 'mke2fs.conf')
-+    if os.path.exists(mke2fs_conf):
-+      mke2fs_env['MKE2FS_CONFIG'] = mke2fs_conf
++    conf_dirs = [os.path.dirname(FindBinaryPath('mke2fs'))]
++    conf_dirs += os.environ.get('APEXER_TOOL_PATH', '').split(':')
++    candidates = [os.path.join(d, 'mke2fs.conf') for d in conf_dirs if d]
++    candidates.append(os.path.join('out', 'host', 'linux-x86', 'bin', 'mke2fs.conf'))
++    candidates.append(os.path.join('system', 'extras', 'ext4_utils', 'mke2fs.conf'))
++    for mke2fs_conf in candidates:
++      if os.path.exists(mke2fs_conf):
++        mke2fs_env['MKE2FS_CONFIG'] = os.path.abspath(mke2fs_conf)
++        break
++    else:
++      print('apexer: WARNING: no mke2fs.conf found, falling back to the host\'s '
++            '/etc/mke2fs.conf; this fails with prebuilt mke2fs on e2fsprogs 1.47+')
 +    RunCommand(cmd, args.verbose, mke2fs_env)
  
      # Compile the file context into the binary form
