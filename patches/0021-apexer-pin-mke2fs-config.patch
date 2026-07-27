@@ -1,0 +1,50 @@
+From cfafe8db93ecbb02fda4052cca4dacb6eccff4de Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 27 Jul 2026 20:35:31 +0100
+Subject: [PATCH] apexer: pin mke2fs to the tree's mke2fs.conf
+
+The prebuilt mke2fs is 1.45.4 and apexer does not tell it which config to
+use, so it reads the build host's /etc/mke2fs.conf. e2fsprogs 1.47+ lists
+`orphan_file` in the ext4 feature set, which 1.45.4 rejects:
+
+  Invalid filesystem option set: has_journal,...,orphan_file
+
+which fails com.android.art.release.apex.unsigned and so the whole build, on
+any host with a current e2fsprogs. The tree ships its own mke2fs.conf next to
+the mke2fs binary in APEXER_TOOL_PATH; use that.
+
+Changes:
+- Set `MKE2FS_CONFIG` for the payload `mke2fs` call, resolved next to the mke2fs binary, and left alone if that file is missing.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: Ie4f33122eb0520951647f91706922c88667764a3
+---
+ apexer/apexer.py | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/apexer/apexer.py b/apexer/apexer.py
+index f698c8c..868a2ea 100644
+--- a/apexer/apexer.py
++++ b/apexer/apexer.py
+@@ -499,7 +499,17 @@ def CreateApex(args, work_dir):
+     cmd.extend(['-E', 'hash_seed=' + uu])
+     cmd.append(img_file)
+     cmd.append(str(size_in_mb) + 'M')
+-    RunCommand(cmd, args.verbose, {'E2FSPROGS_FAKE_TIME': '1'})
++    # Pin mke2fs to the tree's own mke2fs.conf, which ships next to the mke2fs
++    # binary in APEXER_TOOL_PATH. Without this the prebuilt mke2fs (1.45.4) falls
++    # back to the *host's* /etc/mke2fs.conf; on e2fsprogs 1.47+ that lists
++    # `orphan_file` among the ext4 features, which 1.45.4 rejects outright with
++    # "Invalid filesystem option set: ...,orphan_file", failing the ART apex.
++    mke2fs_env = {'E2FSPROGS_FAKE_TIME': '1'}
++    mke2fs_conf = os.path.join(
++        os.path.dirname(FindBinaryPath('mke2fs')), 'mke2fs.conf')
++    if os.path.exists(mke2fs_conf):
++      mke2fs_env['MKE2FS_CONFIG'] = mke2fs_conf
++    RunCommand(cmd, args.verbose, mke2fs_env)
+ 
+     # Compile the file context into the binary form
+     compiled_file_contexts = os.path.join(work_dir, 'file_contexts.bin')
+-- 
+2.55.0
+
