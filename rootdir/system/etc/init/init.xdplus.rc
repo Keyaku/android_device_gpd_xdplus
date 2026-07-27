@@ -13,16 +13,13 @@ service xdplus-tweaks /system/bin/sh /system/etc/xdplus_tweaks.sh ${sys.xdplus.a
     oneshot
 
 # Momentary action dispatch. The menu only ever sets these post-boot, so the
-# script (which pokes SurfaceFlinger) is always safe here. hdmi_up/hdmi_down and
-# the live unfreeze toggle all route through the single dispatcher service,
-# whose command arg is ${sys.xdplus.action}.
+# script (which pokes SurfaceFlinger) is always safe here. hdmi_up/hdmi_down
+# route through the single dispatcher service, whose command arg is
+# ${sys.xdplus.action}.
 on property:sys.xdplus.action=hdmi_up
     start xdplus-tweaks
 
 on property:sys.xdplus.action=hdmi_down
-    start xdplus-tweaks
-
-on property:sys.xdplus.action=unfreeze
     start xdplus-tweaks
 
 # --- Vulkan shader-compile progress relay ------------------------------------
