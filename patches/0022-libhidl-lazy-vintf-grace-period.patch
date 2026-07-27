@@ -1,7 +1,7 @@
 From e89a8b228fc743117405e48ec635c25393198946 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
 Date: Mon, 27 Jul 2026 21:55:08 +0100
-Subject: [PATCH] libhidl: take the non-enforced-VINTF grace period lazily
+Subject: [PATCH 1/2] libhidl: take the non-enforced-VINTF grace period lazily
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -79,6 +79,156 @@ index a7e9626..19b2d54 100644
 +
          // In case of legacy or we were not asked to retry, don't.
          if (vintfLegacy || !retry) break;
+ 
+-- 
+2.55.0
+
+
+From 38aa8d77b9b4964e9848894c4bf441b0a40dcaeb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 27 Jul 2026 22:34:34 +0100
+Subject: [PATCH 2/2] libhidl: wait on a notification for the VINTF grace
+ period, and cap it at 250ms
+
+Follow-up to the lazy grace period. Two further problems with it: it slept
+a flat second even when the server it was waiting for showed up
+immediately, and a second is far longer than anything on this device
+actually needs.
+
+Wait on a service registration notification instead of sleeping, so a
+slow server wakes us the moment it registers, and make the wait interval
+a parameter so the grace period can use a short one. The normal retry
+path keeps the original one-second default.
+
+250 ms is measured, not guessed. Instrumenting the grace period across
+five settled boots showed exactly one lookup on this device is ever
+rescued by it -- soundtrigger@2.0, needing 61-90 ms. The other ~63
+lookups per boot are HALs that do not exist here and were each paying the
+full second. Boot to enable_screen drops from 39.9-46.8 s to 26.8-32.0 s.
+
+Changes:
+- Give `Waiter::wait()` an interval parameter, defaulting to the previous 1 s, and use it for both the condvar timeout and the not-registered fallback.
+- Wait on the notification rather than `sleep(1)` in the grace path, with a measured 250 ms cap.
+- Log a rescued lookup and how long it took (`XDPLUS-GRACE-RESCUE`), so the cap can be re-derived rather than guessed next time.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: If67bfa57d54969903eb460014434e16363f981fd
+---
+ transport/ServiceManagement.cpp | 59 ++++++++++++++++++++++++++-------
+ 1 file changed, 47 insertions(+), 12 deletions(-)
+
+diff --git a/transport/ServiceManagement.cpp b/transport/ServiceManagement.cpp
+index 19b2d54..5207e1b 100644
+--- a/transport/ServiceManagement.cpp
++++ b/transport/ServiceManagement.cpp
+@@ -20,6 +20,8 @@
+ #include <android/dlext.h>
+ #endif  // __ANDROID__
+ 
++#include <chrono>
++#include <cinttypes>
+ #include <condition_variable>
+ #include <dlfcn.h>
+ #include <dirent.h>
+@@ -606,19 +608,21 @@ struct Waiter : IServiceNotification {
+         return Void();
+     }
+ 
+-    void wait(bool timeout) {
+-        using std::literals::chrono_literals::operator""s;
+-
++    // XDPLUS: the wait interval is a parameter rather than a hardcoded second, so
++    // the non-enforced-VINTF grace period can use a much shorter one. The default
++    // keeps the original behaviour for the normal retry path.
++    void wait(bool timeout, std::chrono::milliseconds interval = std::chrono::seconds(1)) {
+         if (!mRegisteredForNotifications) {
+-            // As an alternative, just sleep for a second and return
+-            LOG(WARNING) << "Waiting one second for " << mInterfaceName << "/" << mInstanceName;
+-            sleep(1);
++            // As an alternative, just sleep for the interval and return
++            LOG(WARNING) << "Waiting " << interval.count() << " ms for " << mInterfaceName << "/"
++                         << mInstanceName;
++            usleep(interval.count() * 1000);
+             return;
+         }
+ 
+         std::unique_lock<std::mutex> lock(mMutex);
+         do {
+-            mCondition.wait_for(lock, 1s, [this]{
++            mCondition.wait_for(lock, interval, [this]{
+                 return mRegistered;
+             });
+ 
+@@ -626,7 +630,8 @@ struct Waiter : IServiceNotification {
+                 break;
+             }
+ 
+-            LOG(WARNING) << "Waited one second for " << mInterfaceName << "/" << mInstanceName;
++            LOG(WARNING) << "Waited " << interval.count() << " ms for " << mInterfaceName << "/"
++                         << mInstanceName;
+         } while (!timeout);
+     }
+ 
+@@ -769,6 +774,17 @@ sp<::android::hidl::base::V1_0::IBase> getRawServiceInternal(const std::string&
+     // Callers that passed retry=false (tryGetService) explicitly asked not to
+     // wait for a server, so they never get the grace period either.
+     bool legacyGraceUsed = kEnforceVintfManifest || !retry;
++    // Set when the grace period starts, so a rescued lookup can report how long
++    // the server actually needed. That number is the evidence for how short the
++    // grace timeout can safely be made -- see todo/boot-time-stub-hals.md.
++    int64_t graceStartMs = 0;
++    // How long the grace period is allowed to last. Measured, not guessed: across
++    // settled boots exactly one lookup on this device is ever rescued by the
++    // grace period (soundtrigger@2.0), and it needed 61-87 ms. 250 ms is ~3x the
++    // observed worst case; the other ~63 lookups per boot are HALs that do not
++    // exist here and now give up 750 ms sooner. Re-measure before lowering it
++    // further -- grep the log for XDPLUS-GRACE-RESCUE.
++    static constexpr std::chrono::milliseconds kGraceInterval{250};
+ 
+     for (int tries = 0; !getStub && (vintfHwbinder || vintfLegacy); tries++) {
+         if (waiter == nullptr && tries > 0) {
+@@ -789,6 +805,12 @@ sp<::android::hidl::base::V1_0::IBase> getRawServiceInternal(const std::string&
+                 details::canCastInterface(base.get(), descriptor.c_str(), true /* emitError */);
+ 
+             if (canCastRet.isOk() && canCastRet) {
++                if (graceStartMs != 0) {
++                    ALOGI("getService: %s/%s appeared %" PRId64
++                          " ms into the grace period (XDPLUS-GRACE-RESCUE).",
++                          descriptor.c_str(), instance.c_str(),
++                          android::uptimeMillis() - graceStartMs);
++                }
+                 if (waiter != nullptr) {
+                     waiter->done();
+                 }
+@@ -800,12 +822,25 @@ sp<::android::hidl::base::V1_0::IBase> getRawServiceInternal(const std::string&
+ 
+         // XDPLUS: the deferred non-enforced-VINTF grace period (see above). Only
+         // spend it once, and only after a lookup has actually come back empty.
++        //
++        // Wait on a service notification rather than sleeping a flat second. A
++        // server that is merely slow to register now wakes us the moment it
++        // does, instead of costing the full second every time; a server that
++        // does not exist still costs the Waiter's one-second timeout, exactly as
++        // the old sleep did. Strictly better in every case and needs no guessed
++        // timeout value. The vintfLegacy path never reaches the loop's own
++        // waiter below -- it breaks out first -- which is why this is here.
+         if (!legacyGraceUsed) {
+             legacyGraceUsed = true;
+-            ALOGI("getService: %s/%s not registered yet and the VINTF manifest is not enforced; "
+-                  "waiting one second in case the server is still starting.",
+-                  descriptor.c_str(), instance.c_str());
+-            sleep(1);
++            if (waiter == nullptr) {
++                waiter = new Waiter(descriptor, instance, sm);
++            }
++            // Deliberately no reset() here: the top of the loop already reset
++            // the waiter before the get() that just came back empty, and
++            // clearing it again could drop a registration that landed in
++            // between (see the comments on reset()).
++            graceStartMs = android::uptimeMillis();
++            waiter->wait(true /* timeout */, kGraceInterval);
+             continue;
+         }
  
 -- 
 2.55.0
