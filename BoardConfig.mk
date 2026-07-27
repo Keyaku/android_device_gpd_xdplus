@@ -51,6 +51,8 @@ TARGET_KERNEL_ARCH := arm64
 # defconfig, +_ADDITIONAL_CONFIG for the fragment (mandatory: without it the DDK
 # drops to 1.7 against 1.9 blobs) — and would make `mka bacon` build the kernel
 # itself instead of packing a copy that can silently go stale.
+# ⚠️ DELETE THIS ENTIRE COMMENT AND THE LINE BELOW once that migration lands —
+# none of it carries information post-migration.
 TARGET_PREBUILT_KERNEL := $(LOCAL_PATH)/prebuilt/Image.gz-dtb
 BOARD_MKBOOTIMG_ARGS := --kernel_offset $(BOARD_KERNEL_OFFSET) --ramdisk_offset $(BOARD_RAMDISK_OFFSET) --tags_offset $(BOARD_KERNEL_TAGS_OFFSET)
 
