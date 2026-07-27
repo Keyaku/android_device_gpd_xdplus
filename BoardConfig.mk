@@ -34,26 +34,22 @@ BOARD_KERNEL_PAGESIZE := 2048
 BOARD_KERNEL_TAGS_OFFSET := 0x14000000
 BOARD_RAMDISK_OFFSET := 0x15000000
 TARGET_KERNEL_ARCH := arm64
-# The kernel is BUILT FROM SOURCE — the "rabbit hole" this comment used to warn
-# about was resolved; the 3.18.79 tree builds and boots with hardware GPU. It is
-# just built OUT of the Android tree, by scripts/kbuild.sh (GCC 4.9,
-# mt8176_defconfig + scripts/xdplus_kernel.frag), and its Image.gz-dtb is copied
-# here. So this path is our own build output, not an extracted vendor image.
-#
-# ⚠️ The file is gitignored and NOT produced by `mka bacon` — if it goes missing
-# the build fails with "'device/gpd/xdplus/prebuilt/Image.gz-dtb', needed by
-# 'kernel', missing and no known rule to make it". Refill it from
-# .kbuild/kout/arch/arm64/boot/Image.gz-dtb.
-#
-# TODO: move to LineageOS's in-tree kernel build (vendor/lineage/build/tasks/
-# kernel.mk), which warns that any TARGET_PREBUILT_KERNEL is deprecated. It
-# supports exactly what kbuild.sh does — TARGET_KERNEL_SOURCE, +_CONFIG for the
-# defconfig, +_ADDITIONAL_CONFIG for the fragment (mandatory: without it the DDK
-# drops to 1.7 against 1.9 blobs) — and would make `mka bacon` build the kernel
-# itself instead of packing a copy that can silently go stale.
-# ⚠️ DELETE THIS ENTIRE COMMENT AND THE LINE BELOW once that migration lands —
-# none of it carries information post-migration.
-TARGET_PREBUILT_KERNEL := $(LOCAL_PATH)/prebuilt/Image.gz-dtb
+# The 3.18.79 kernel is built in-tree by vendor/lineage/build/tasks/kernel.mk.
+# ⚠️ TARGET_KERNEL_ADDITIONAL_CONFIG is MANDATORY, not an optimisation: without
+# the fragment CONFIG_MTK_GPU_VERSION is unset, the DDK drops to 1.7 against the
+# 1.9 vendor blobs, and SurfaceFlinger loops on "PVRSRVConnectKM: Incompatible
+# driver". kernel.mk only $(warning)s on a missing fragment and then builds from
+# /dev/null, so a typo here fails silently — after any change, diff
+# out/target/product/xdplus/obj/KERNEL_OBJ/.config against a known-good .config.
+TARGET_KERNEL_SOURCE := kernel/gpd/mt8176
+TARGET_KERNEL_CONFIG := mt8176_defconfig
+TARGET_KERNEL_ADDITIONAL_CONFIG := xdplus_kernel.frag
+TARGET_KERNEL_CLANG_COMPILE := false
+# 3.18's host tools predate -fno-common (clang 11 default) and C99 — dtc fails
+# on duplicate `yylloc` without -fcommon. HOSTCFLAGS is assigned with `=` in the
+# 3.18 top Makefile, so it must be overridden on the make command line; this
+# assignment lands after BoardConfigKernel.mk's own HOSTCFLAGS and wins.
+TARGET_KERNEL_ADDITIONAL_FLAGS := HOSTCFLAGS="-Wall -O2 -fomit-frame-pointer -std=gnu89 -fcommon -fuse-ld=lld"
 BOARD_MKBOOTIMG_ARGS := --kernel_offset $(BOARD_KERNEL_OFFSET) --ramdisk_offset $(BOARD_RAMDISK_OFFSET) --tags_offset $(BOARD_KERNEL_TAGS_OFFSET)
 
 # Shim CallStack (moved out of libutils in R) into the vendor graphics blobs

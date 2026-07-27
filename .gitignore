@@ -4,11 +4,6 @@
 *.pyc
 __pycache__/
 
-# Prebuilt kernel is large + extracted from the shipped boot.img (ground truth,
-# not our source). Keep it locally; fetch/extract per FINDINGS if cloning fresh.
-# Comment out the next line if you want it tracked in the repo.
-prebuilt/Image.gz-dtb
-
 # OTA CA + server private keys (scripts/ota_ca_setup.sh). Secret — never track.
 # The hashed CA PUBLIC cert (ota/cacerts/*.0) IS tracked; it goes in the image.
 ota/private/
