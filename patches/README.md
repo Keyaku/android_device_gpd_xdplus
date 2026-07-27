@@ -50,3 +50,16 @@ git -C frameworks/native apply device/gpd/xdplus/patches/0018-*.patch
 git -C frameworks/base apply device/gpd/xdplus/patches/0019-*.patch
 git -C frameworks/base apply device/gpd/xdplus/patches/0020-*.patch
 ```
+
+## Drift check (patch series ↔ trees)
+
+The series must reproduce the working trees. Verify with `git -C <repo> apply --check --reverse <patch>` for every row above.
+
+⚠️ Two patch pairs touch the same file, so a *standalone* reverse-check of the earlier one fails on context alone — that is not drift. Reverse them cumulatively, newest first, and restore the tree afterwards:
+
+- `0017`/`0018` — both `services/surfaceflinger/SurfaceFlinger.cpp`. Reverse `0018` first, then `0017` checks clean.
+- `0016` — `HWComposer.cpp` also carries the uncaptured in-tree commit `a806d21d98` (§115 internal-display forced validate, **KNOWN-BAD**, `persist.sys.xdplus.prim_force_validate`, default off). Revert that first and `0016` checks clean.
+
+**Deliberately uncaptured in-tree commits** (a from-patches build is correct but will not byte-match the running artifacts): `frameworks/native` `048d9f1dbf` (§111 `[XDPLUS-SLB]` probe), `b45909b9f9` (§112 buffer-cache-bypass switch), `a806d21d98` (§115 KNOWN-BAD lever). All three are prop-gated off; drop or capture them when the HDMI hunt ends.
+
+**Last verified 2026-07-27: 20/20 clean** (18 standalone, `0016` + `0017` clean under the cumulative procedure above).
