@@ -12,13 +12,17 @@ PRODUCT_PACKAGES += LatinIME
 PRODUCT_PACKAGE_OVERLAYS += vendor/lineage/overlay/dictionaries
 PRODUCT_ENFORCE_RRO_EXCLUDED_OVERLAYS += vendor/lineage/overlay/dictionaries
 
-# Match the shipped Android 11 build fingerprint (ALLDOCUBE U1005E 8.1 vendor base)
-
-# ro.build.version.base_os (Athena "Base OS" was empty). PLATFORM_BASE_OS is the
-# only clean source for this prop — adding ro.build.version.base_os via
-# PRODUCT_PROPERTY_OVERRIDES collides with the build-generated key. Set it to our
-# own fingerprint (the OS this security-patch baseline is built from == this build).
-# Use ?= to avoid "cannot assign to readonly variable" on rebuilds.
+# No BUILD_FINGERPRINT / PRIVATE_BUILD_DESC override. The build emits its own
+# fingerprint from PRODUCT_BRAND/PRODUCT_DEVICE/BUILD_ID/BUILD_NUMBER, which is
+# the honest one and already what ro.system.build.fingerprint carries:
+#
+#   GPD/lineage_xdplus/xdplus:11/RQ3A.211001.001/<YYYYMMDD.HHMMSS>:userdebug/dev-keys
+#
+# An override used to pin both props to the upstream tree this port was derived
+# from. That is someone else's build identity on our images — the vendor base is
+# ours — so it is gone. Do not reintroduce a hardcoded fingerprint here: if a
+# vendor blob or DRM path is ever found to need one, fix the blob or document the
+# dependency, do not relabel the build as a third party's.
 
 PRODUCT_NAME := lineage_xdplus
 PRODUCT_DEVICE := xdplus
