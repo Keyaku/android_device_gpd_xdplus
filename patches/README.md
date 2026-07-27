@@ -64,4 +64,4 @@ The series must reproduce the working trees. Verify with `git -C <repo> apply --
 
 **Deliberately uncaptured in-tree commits** (a from-patches build is correct but will not byte-match the running artifacts): `frameworks/native` `048d9f1dbf` (§111 `[XDPLUS-SLB]` probe), `b45909b9f9` (§112 buffer-cache-bypass switch), `a806d21d98` (§115 KNOWN-BAD lever). All three are prop-gated off; drop or capture them when the HDMI hunt ends.
 
-**Last verified 2026-07-27: 20/20 clean** (18 standalone, `0016` + `0017` clean under the cumulative procedure above).
+**Last verified 2026-07-27: 21/21 clean** (19 standalone, `0016` + `0017` clean under the cumulative procedure above). Re-run in full after `0021` was added.
