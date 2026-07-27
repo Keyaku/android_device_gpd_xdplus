@@ -1,0 +1,22 @@
+<manifest version="1.0" type="framework">
+    <!-- Declares the system-side health HAL this device ships in place of the
+         absent vendor one. Without this entry hwservicemanager's getTransport
+         misses ("Cannot find entry android.hardware.health@2.0::IHealth/default
+         in either framework or device manifest") and the lookup resolves only
+         through the non-enforced-VINTF legacy path, which costs a wasted
+         retry per lookup during boot.
+
+         Only 2.1 is listed: ManifestHal::isValid() rejects two versions sharing
+         a major, and it does not need to be listed twice anyway --
+         forEachInstanceOfVersion matches on minorAtLeast(), so this entry also
+         answers BatteryService's request for the 2.0 interface. -->
+    <hal format="hidl">
+        <name>android.hardware.health</name>
+        <transport>hwbinder</transport>
+        <version>2.1</version>
+        <interface>
+            <name>IHealth</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+</manifest>

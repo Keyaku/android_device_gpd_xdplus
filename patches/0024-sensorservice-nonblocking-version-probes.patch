@@ -1,0 +1,54 @@
+From 087c43add623f79a0e42a41b21e6140482ad5b08 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 27 Jul 2026 21:55:21 +0100
+Subject: [PATCH] sensorservice: do not block on speculative sensors HAL
+ version probes
+
+SensorDevice walks 2.1 -> 2.0 -> 1.0 looking for a sensors HAL. On this
+device the vendor manifest declares 1.0 only, so both 2.x probes were
+pure wait before the version that exists was ever tried.
+
+A device that ships a 2.x sensors HAL declares it in the manifest and has
+it running by this point, so the speculative probes have nothing to wait
+for. The 1.0 path keeps its blocking getService().
+
+Changes:
+- Use `tryGetService()` for the 2.1 and 2.0 probes in `connectHidlServiceV2_1` / `connectHidlServiceV2_0`.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: Ife15c6a00ea48b124079f491959c5d6c0cf126c5
+---
+ services/sensorservice/SensorDevice.cpp | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/services/sensorservice/SensorDevice.cpp b/services/sensorservice/SensorDevice.cpp
+index e355594176..f004696744 100644
+--- a/services/sensorservice/SensorDevice.cpp
++++ b/services/sensorservice/SensorDevice.cpp
+@@ -248,7 +248,11 @@ SensorDevice::HalConnectionStatus SensorDevice::connectHidlServiceV1_0() {
+ 
+ SensorDevice::HalConnectionStatus SensorDevice::connectHidlServiceV2_0() {
+     HalConnectionStatus connectionStatus = HalConnectionStatus::UNKNOWN;
+-    sp<V2_0::ISensors> sensors = V2_0::ISensors::getService();
++    // Speculative version probe: this is only reached when 2.1 was absent, and a
++    // device that ships a 2.x sensors HAL has it in the manifest and running
++    // already. Use tryGetService so an older-HAL device does not wait on a
++    // version it will never have.
++    sp<V2_0::ISensors> sensors = V2_0::ISensors::tryGetService();
+ 
+     if (sensors == nullptr) {
+         connectionStatus = HalConnectionStatus::DOES_NOT_EXIST;
+@@ -262,7 +266,9 @@ SensorDevice::HalConnectionStatus SensorDevice::connectHidlServiceV2_0() {
+ 
+ SensorDevice::HalConnectionStatus SensorDevice::connectHidlServiceV2_1() {
+     HalConnectionStatus connectionStatus = HalConnectionStatus::UNKNOWN;
+-    sp<V2_1::ISensors> sensors = V2_1::ISensors::getService();
++    // Speculative version probe -- see connectHidlServiceV2_0 for why this does
++    // not block. A device with a 2.1 HAL declares and starts it before this.
++    sp<V2_1::ISensors> sensors = V2_1::ISensors::tryGetService();
+ 
+     if (sensors == nullptr) {
+         connectionStatus = HalConnectionStatus::DOES_NOT_EXIST;
+-- 
+2.55.0
+

@@ -4,13 +4,16 @@
 // health impl in-process (no vendor passthrough -impl .so — see service.cpp for
 // why the stock wrapper+dlopen split can't be used on this system-as-root
 // device). Built for core/system (no `vendor: true`), mirroring the
-// configstore/dumpstate .xdplus backup services. No vintf_fragments: VINTF is
-// unenforced here (§39) and getService resolves via registerAsService, exactly
-// like the other .xdplus services.
+// configstore/dumpstate .xdplus backup services. VINTF is unenforced here (§39)
+// so registerAsService alone is enough for correctness, but the manifest
+// fragment is still declared: without it every getTransport lookup misses and
+// the caller pays the non-enforced-VINTF legacy retry, which is boot time spent
+// for nothing (§123).
 cc_binary {
 	name: "android.hardware.health@2.1-service.xdplus",
 	relative_install_path: "hw",
 	init_rc: ["android.hardware.health@2.1-service.xdplus.rc"],
+	vintf_fragments: ["android.hardware.health@2.1-service.xdplus.xml"],
 	srcs: ["service.cpp"],
 	shared_libs: [
 		"libbase",

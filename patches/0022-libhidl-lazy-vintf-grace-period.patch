@@ -1,0 +1,85 @@
+From e89a8b228fc743117405e48ec635c25393198946 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 27 Jul 2026 21:55:08 +0100
+Subject: [PATCH] libhidl: take the non-enforced-VINTF grace period lazily
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`getRawServiceInternal` slept 1 s unconditionally whenever the VINTF
+manifest is not enforced, to give a not-yet-registered non-manifest HAL a
+chance to come up. This device does not enforce VINTF (PORTING_LOG §39),
+so *every* getService() on the system paid that second up front --
+including every lookup that would have succeeded immediately. It is the
+single largest boot-time item on this port, worth far more than the
+health HAL it was originally chased through.
+
+Attempt the lookup first instead, and only sleep+retry once if it came
+back empty. A genuinely racing server still gets one second of grace and
+one more attempt, so the behaviour it exists for is unchanged; the cost
+is now paid only when it can actually help. Callers that passed
+retry=false (tryGetService) explicitly asked not to wait, so they skip
+the grace period entirely.
+
+Changes:
+- Replace the unconditional pre-loop `sleep(1)` with a deferred, one-shot grace period taken inside the retry loop after an empty lookup.
+- Skip the grace period for `retry=false` callers.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: I8ce2aba3ff8432afc608c0faf572a3a3d769cf81
+---
+ transport/ServiceManagement.cpp | 31 ++++++++++++++++++++++---------
+ 1 file changed, 22 insertions(+), 9 deletions(-)
+
+diff --git a/transport/ServiceManagement.cpp b/transport/ServiceManagement.cpp
+index a7e9626..19b2d54 100644
+--- a/transport/ServiceManagement.cpp
++++ b/transport/ServiceManagement.cpp
+@@ -758,15 +758,17 @@ sp<::android::hidl::base::V1_0::IBase> getRawServiceInternal(const std::string&
+     const bool allowLegacy = !kEnforceVintfManifest || (trebleTestingOverride && kDebuggable);
+     const bool vintfLegacy = (transport == Transport::EMPTY) && allowLegacy;
+ 
+-    if (!kEnforceVintfManifest) {
+-        ALOGE("getService: Potential race detected. The VINTF manifest is not being enforced. If "
+-              "a HAL server has a delay in starting and it is not in the manifest, it will not be "
+-              "retrieved. Please make sure all HALs on this device are in the VINTF manifest and "
+-              "enable PRODUCT_ENFORCE_VINTF_MANIFEST on this device (this is also enabled by "
+-              "PRODUCT_FULL_TREBLE). PRODUCT_ENFORCE_VINTF_MANIFEST will ensure that no race "
+-              "condition is possible here.");
+-        sleep(1);
+-    }
++    // XDPLUS (boot time): upstream slept 1 s *unconditionally* here whenever the
++    // VINTF manifest is not enforced, to give a not-yet-registered non-manifest
++    // HAL a grace period. This device does not enforce VINTF (§39), so every
++    // single getService() on the whole system paid that second -- including the
++    // ones that would have succeeded immediately. Instead, take the grace period
++    // lazily: attempt the lookup first, and only sleep+retry once if it failed.
++    // Effective behaviour for a racing server is unchanged (one second of grace,
++    // then one more attempt); the cost is now paid only when it can help.
++    // Callers that passed retry=false (tryGetService) explicitly asked not to
++    // wait for a server, so they never get the grace period either.
++    bool legacyGraceUsed = kEnforceVintfManifest || !retry;
+ 
+     for (int tries = 0; !getStub && (vintfHwbinder || vintfLegacy); tries++) {
+         if (waiter == nullptr && tries > 0) {
+@@ -796,6 +798,17 @@ sp<::android::hidl::base::V1_0::IBase> getRawServiceInternal(const std::string&
+             if (!handleCastError(canCastRet, descriptor, instance)) break;
+         }
+ 
++        // XDPLUS: the deferred non-enforced-VINTF grace period (see above). Only
++        // spend it once, and only after a lookup has actually come back empty.
++        if (!legacyGraceUsed) {
++            legacyGraceUsed = true;
++            ALOGI("getService: %s/%s not registered yet and the VINTF manifest is not enforced; "
++                  "waiting one second in case the server is still starting.",
++                  descriptor.c_str(), instance.c_str());
++            sleep(1);
++            continue;
++        }
++
+         // In case of legacy or we were not asked to retry, don't.
+         if (vintfLegacy || !retry) break;
+ 
+-- 
+2.55.0
+
