@@ -34,9 +34,23 @@ BOARD_KERNEL_PAGESIZE := 2048
 BOARD_KERNEL_TAGS_OFFSET := 0x14000000
 BOARD_RAMDISK_OFFSET := 0x15000000
 TARGET_KERNEL_ARCH := arm64
-# Use the exact working 3.18 kernel extracted from the shipped boot.img.
-# Rebuilding the incomplete public 3.18 source under LOS 18.1's clang/gcc guard
-# is a rabbit hole and may not match the shipped kernel — prebuilt is the ground truth.
+# The kernel is BUILT FROM SOURCE — the "rabbit hole" this comment used to warn
+# about was resolved; the 3.18.79 tree builds and boots with hardware GPU. It is
+# just built OUT of the Android tree, by scripts/kbuild.sh (GCC 4.9,
+# mt8176_defconfig + scripts/xdplus_kernel.frag), and its Image.gz-dtb is copied
+# here. So this path is our own build output, not an extracted vendor image.
+#
+# ⚠️ The file is gitignored and NOT produced by `mka bacon` — if it goes missing
+# the build fails with "'device/gpd/xdplus/prebuilt/Image.gz-dtb', needed by
+# 'kernel', missing and no known rule to make it". Refill it from
+# .kbuild/kout/arch/arm64/boot/Image.gz-dtb.
+#
+# TODO: move to LineageOS's in-tree kernel build (vendor/lineage/build/tasks/
+# kernel.mk), which warns that any TARGET_PREBUILT_KERNEL is deprecated. It
+# supports exactly what kbuild.sh does — TARGET_KERNEL_SOURCE, +_CONFIG for the
+# defconfig, +_ADDITIONAL_CONFIG for the fragment (mandatory: without it the DDK
+# drops to 1.7 against 1.9 blobs) — and would make `mka bacon` build the kernel
+# itself instead of packing a copy that can silently go stale.
 TARGET_PREBUILT_KERNEL := $(LOCAL_PATH)/prebuilt/Image.gz-dtb
 BOARD_MKBOOTIMG_ARGS := --kernel_offset $(BOARD_KERNEL_OFFSET) --ramdisk_offset $(BOARD_RAMDISK_OFFSET) --tags_offset $(BOARD_KERNEL_TAGS_OFFSET)
 
