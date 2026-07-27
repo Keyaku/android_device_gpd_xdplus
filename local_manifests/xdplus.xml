@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Local manifest for the GPD XD+ port.
+
+  ⚠️ THIS FILE IS INERT WHERE IT SITS. It is a template, kept in the device tree
+  so that it is versioned and survives — `.repo/` is not backed up by anything.
+  repo only reads `.repo/local_manifests/*.xml`.
+
+  DO NOT copy it into `.repo/local_manifests/` until all three projects below
+  have been pushed. Today none of them has been: `repo list` knows no gpd project
+  at all, and device/vendor/kernel are plain local git clones carrying unpushed
+  history with no remote-tracking refs. Activating this file would put `repo sync`
+  — an ordinary, previously harmless command — in charge of paths holding every
+  local commit the port depends on, with nothing on the remote to sync against.
+
+  Once the branches are pushed:
+
+      mkdir -p .repo/local_manifests
+      cp device/gpd/xdplus/local_manifests/xdplus.xml .repo/local_manifests/
+
+  The kernel entry is what makes `TARGET_KERNEL_SOURCE := kernel/gpd/mt8176`
+  (BoardConfig.mk, the in-tree kernel build) resolve on a fresh checkout.
+-->
+<manifest>
+
+  <remote  name="keyaku"
+           fetch="https://github.com/Keyaku" />
+
+  <project path="kernel/gpd/mt8176"
+           name="android_kernel_mt8176_common"
+           remote="keyaku"
+           revision="refs/heads/xdplus-los18" />
+
+  <project path="device/gpd/xdplus"
+           name="android_device_gpd_xdplus"
+           remote="keyaku"
+           revision="refs/heads/lineage-18.1" />
+
+  <project path="vendor/gpd/xdplus"
+           name="android_vendor_gpd_xdplus"
+           remote="keyaku"
+           revision="refs/heads/lineage-18.1" />
+
+</manifest>
