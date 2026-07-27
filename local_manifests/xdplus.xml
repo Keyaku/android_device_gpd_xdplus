@@ -13,7 +13,12 @@
   — an ordinary, previously harmless command — in charge of paths holding every
   local commit the port depends on, with nothing on the remote to sync against.
 
-  Once the branches are pushed:
+  Activating this is a migration, not a copy: the three paths already hold
+  standalone git checkouts, which repo refuses to adopt (it raises
+  "unsupported checkout state" rather than clobbering them), and
+  device/gpd/xdplus/keys/ is gitignored — a fresh clone loses every signing key.
+  Follow the runbook: back up the keys, push all three branches, verify the
+  remote hashes, then hand over one path at a time.
 
       mkdir -p .repo/local_manifests
       cp device/gpd/xdplus/local_manifests/xdplus.xml .repo/local_manifests/
