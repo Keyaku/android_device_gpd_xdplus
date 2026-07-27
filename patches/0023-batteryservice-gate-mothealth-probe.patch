@@ -1,0 +1,84 @@
+From 34d7713cf898f18275c7d13b5a9c7647c021f068 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 27 Jul 2026 21:55:15 +0100
+Subject: [PATCH] BatteryService: gate the Motorola Mods health probe behind a
+ config flag
+
+LineageOS's BatteryService unconditionally looks up
+motorola.hardware.health@1.0::IMotHealth, a Motorola Mods extension that
+no non-Motorola device ships. On this port the lookup is a guaranteed
+miss that still costs a service-lookup wait during boot.
+
+Changes:
+- Add `config_supportsMotHealth` (default false) and its java-symbol, so only devices that actually ship the extension overlay it to true.
+- Only call `IMotHealth.getService()` when that config is set; the existing failure handling is untouched.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: I8e3f2394f670b119d82e3294c3d77a117b9ed1cc
+---
+ core/res/res/values/config.xml                 |  6 ++++++
+ core/res/res/values/symbols.xml                |  1 +
+ .../com/android/server/BatteryService.java     | 18 ++++++++++++------
+ 3 files changed, 19 insertions(+), 6 deletions(-)
+
+diff --git a/core/res/res/values/config.xml b/core/res/res/values/config.xml
+index bf0048fa..c7b00caa 100644
+--- a/core/res/res/values/config.xml
++++ b/core/res/res/values/config.xml
+@@ -979,6 +979,12 @@
+     <!-- Indicate whether the SD card is accessible without removing the battery. -->
+     <bool name="config_batterySdCardAccessibility">false</bool>
+ 
++    <!-- Whether this device supports the Motorola Mods battery extension
++         (motorola.hardware.health@1.0::IMotHealth). Probing for a HAL that
++         is not present costs a service-lookup wait during boot, so only the
++         devices that actually ship it should overlay this to true. -->
++    <bool name="config_supportsMotHealth">false</bool>
++
+     <!-- List of file paths for USB host busses to exclude from USB host support.
+          For example, if the first USB bus on the device is used to communicate
+          with the modem or some other restricted hardware, add "/dev/bus/usb/001/"
+diff --git a/core/res/res/values/symbols.xml b/core/res/res/values/symbols.xml
+index bd37196f..cc428a2f 100644
+--- a/core/res/res/values/symbols.xml
++++ b/core/res/res/values/symbols.xml
+@@ -314,6 +314,7 @@
+   <java-symbol type="bool" name="config_sms_capable" />
+   <java-symbol type="bool" name="config_sms_utf8_support" />
+   <java-symbol type="bool" name="config_mobile_data_capable" />
++  <java-symbol type="bool" name="config_supportsMotHealth" />
+   <java-symbol type="bool" name="config_suspendWhenScreenOffDueToProximity" />
+   <java-symbol type="bool" name="config_swipeDisambiguation" />
+   <java-symbol type="bool" name="config_syncstorageengine_masterSyncAutomatically" />
+diff --git a/services/core/java/com/android/server/BatteryService.java b/services/core/java/com/android/server/BatteryService.java
+index 14ea64d3..d6eb7cba 100644
+--- a/services/core/java/com/android/server/BatteryService.java
++++ b/services/core/java/com/android/server/BatteryService.java
+@@ -265,12 +265,18 @@ public final class BatteryService extends SystemService {
+         mBatteryModProps.modFlag = 0;
+         mBatteryModProps.modType = 0;
+         mBatteryModProps.modPowerSource = 0;
+-        try {
+-            mMotHealthService = IMotHealth.getService();
+-        } catch (RemoteException e) {
+-            Slog.e(TAG, "health: cannot get service. (RemoteException)");
+-        } catch (NoSuchElementException e2) {
+-            Slog.e(TAG, "mothealth: cannot get service. (no supported health HAL service)");
++        // Only look the Motorola Mods health extension up on devices that
++        // actually ship it: on everything else the lookup is a guaranteed miss
++        // that still costs a service-lookup wait during boot.
++        if (mContext.getResources().getBoolean(
++                com.android.internal.R.bool.config_supportsMotHealth)) {
++            try {
++                mMotHealthService = IMotHealth.getService();
++            } catch (RemoteException e) {
++                Slog.e(TAG, "health: cannot get service. (RemoteException)");
++            } catch (NoSuchElementException e2) {
++                Slog.e(TAG, "mothealth: cannot get service. (no supported health HAL service)");
++            }
+         }
+     }
+ 
+-- 
+2.55.0
+
