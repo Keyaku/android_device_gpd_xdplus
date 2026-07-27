@@ -163,7 +163,12 @@ PRODUCT_PACKAGES += hdmictl
 # Old HIDL libs the vendor audio HAL links against (not installed by default in R)
 PRODUCT_PACKAGES += android.hardware.soundtrigger@2.0 android.hardware.audio.common@2.0-util libaudioroute libaudiospdif
 
-# Reference libaudiohal with 2.0 client support (see prebuilt/audiohal/Android.bp)
+# The @2.0 audio HAL client. AOSP R dropped it; LineageOS 18.1 keeps both the
+# library (frameworks/av/media/libaudiohal/impl/Android.bp) and its entry in the
+# loader's version table (FactoryHalHidl.cpp), so this builds from source — the
+# MTK binderized audio@2.0 service can't run (its -impl blob needs O-era
+# HidlUtils manglings nothing in R provides) and audioserver reaches the vendor
+# audio.primary HAL through this client instead.
 PRODUCT_PACKAGES += libaudiohal@2.0
 
 # System-side generic soundtrigger impl (see shims/soundtrigger/Android.bp)
