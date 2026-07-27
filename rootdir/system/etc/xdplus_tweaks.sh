@@ -4,10 +4,9 @@
 # sys.xdplus.*/persist.sys.xdplus.* props; all root-side work happens here.
 #
 # Usage: xdplus_tweaks.sh <command>
-#   hdmi_up      full mini-HDMI mirror bringup (PORTING_LOG §64)
+#   hdmi_up      mini-HDMI DECOUPLE_MIRROR bringup (PORTING_LOG §117/§118)
 #   hdmi_down    tear HDMI down, return to built-in panel only
-#   unfreeze     apply persist.sys.xdplus.hdmi_unfreeze -> debug.hwc.is_skip_validate
-#   boot         re-apply persisted toggles at boot_completed
+#   boot         re-apply persisted toggles at boot_completed (currently a no-op)
 
 H=/d/hdmi
 # hdmictl now ships in the image (device/gpd/xdplus/hdmi); the /data copy is only
@@ -24,29 +23,23 @@ VBLOB_MD5=54b28199
 # binary and recurses infinitely, hanging the service. Use the binary by full path.
 xlog() { /system/bin/log -t xdplus_tweaks "$*" 2>/dev/null; echo "xdplus_tweaks: $*"; }
 
-# Apply the persisted un-freeze value to the composer's debug.hwc.is_skip_validate.
+# DECOUPLE_MIRROR bringup (§117/§118). The panel stays on hardware overlays
+# (OVL0 -> WDMA0 -> RDMA0) and the external display is fed by the MDP blit — no
+# GPU composition on either pipe. Replaces the old 1008-latch path (§64-§90),
+# which forced the external display onto GPU CLIENT composition and left the
+# panel frozen while mirroring (§114).
 #
-# ⚠️ §83: leave this OFF. is_skip_validate=0 does NOT unfreeze the panel, and it makes
-# a freeze STICKY — it survives HDMI teardown, a composer restart and a full reboot
-# (the boot oneshot re-applies it every boot, so the panel comes back frozen). Recovery
-# is: set persist.sys.xdplus.hdmi_unfreeze 0, clear debug.hwc.is_skip_validate, restart
-# the composer. §64 had already found this prop "makes things worse"; §68 shipped it as
-# a toggle anyway. Do not default it on.
-# We deliberately do NOT poke SurfaceFlinger here: a live `dumpsys SurfaceFlinger`
-# right after flipping is_skip_validate wedges system_server into a reboot on this
-# build. The composer reads the prop naturally at its next deviceDump / on the next
-# boot's SurfaceFlinger startup, so the toggle takes effect on the next reboot.
-apply_unfreeze() {
-	if [ "$(getprop persist.sys.xdplus.hdmi_unfreeze)" = "1" ]; then
-		setprop debug.hwc.is_skip_validate 0
-		xlog "panel un-freeze ON (is_skip_validate=0; effective next reboot)"
-	else
-		setprop debug.hwc.is_skip_validate ""
-		xlog "panel un-freeze OFF (effective next reboot)"
-	fi
-	return 0
-}
-
+# Preconditions, all discovered the hard way:
+#  - persist.sys.xdplus.hdmi_force_validate must have been 0 AT BOOT.
+#    SurfaceFlinger reads it once at startup; §90's forced validate makes the
+#    external display CLIENT-composed with a single layer, the blob's
+#    isMirrorList then fails (chkMir L3819), and no live prop write can fix it.
+#  - debug.hwc.mirror_state must be 1 BEFORE display 1 hotplugs: the mirror
+#    output queue is only created in HWCDispatcher::onPlugIn.
+#  - The keyguard must be dismissed: its KEYGUARD_DIALOG presentation on the
+#    external display makes WindowManager report the display as having content,
+#    DisplayManager then gives it its own layer stack instead of mirroring
+#    stack 0, and the blob refuses (I-size mismatch at chkMir L3819).
 hdmi_up() {
 	RES="$(getprop persist.sys.xdplus.hdmi_res)"; [ -z "$RES" ] && RES=2
 	if [ ! -x "$CTL" ]; then
@@ -66,13 +59,24 @@ hdmi_up() {
 		return 1
 	fi
 
-	# Dispatcher pacing knob for the mirrored-output stutter. Set before the first
-	# dumpsys below, which is what latches it (the blob only re-reads its debug
-	# props inside HWCMediator::deviceDump — §67).
+	if [ "$(getprop persist.sys.xdplus.hdmi_force_validate)" != "0" ]; then
+		xlog "mirror mode not armed (hdmi_force_validate != 0 at boot) — enable 'HDMI mirror mode' in the GPD XD+ menu and reboot first"
+		return 1
+	fi
+
+	# Mirror queue gate + optional dispatcher pacing knob. Both are debug.hwc.*
+	# props the blob only re-reads inside HWCMediator::deviceDump (§67), so latch
+	# them with a dumpsys BEFORE the display registers.
+	setprop debug.hwc.mirror_state 1
 	if [ "$(getprop persist.sys.xdplus.hdmi_novsync)" = "1" ]; then
 		setprop debug.hwc.trigger_by_vsync 0
 		xlog "trigger_by_vsync=0 (stutter knob)"
 	fi
+	dumpsys SurfaceFlinger > /dev/null
+
+	# Keyguard gate (see header). 224 = KEYCODE_WAKEUP.
+	input keyevent 224; sleep 1
+	wm dismiss-keyguard; sleep 2
 
 	# §84: the debugfs nodes can come up 0444, which makes every write below fail
 	# with "Permission denied" even as root.
@@ -85,53 +89,32 @@ hdmi_up() {
 	$CTL power 1; sleep 3
 	$CTL res "$RES"; sleep 6
 
-	input keyevent 224; sleep 1
-	wm dismiss-keyguard; sleep 3
-
 	for try in 1 2 3; do
 		if [ "$(dumpsys display | grep -c 'HDMI Screen')" = 0 ]; then
+			# The res 11 -> res N toggle is what actually registers display 1.
 			echo fakecablein:disable > $H
 			$CTL res 11; sleep 3
 			$CTL res "$RES"; sleep 5
 		fi
-		xlog "latch (attempt $try)"
-		# MUST be uid 1000 (PORTING_LOG §84): SurfaceFlinger::onTransact rejects debug
-		# codes >= 1000 from any uid but AID_SYSTEM, so running these as root silently
-		# does nothing and prints the easily misread
-		# 'Result: Parcel(Error: 0xffffffffffffffff "Operation not permitted")'.
-		su 1000 -c "service call SurfaceFlinger 1008 i32 1"; sleep 8
-		su 1000 -c "service call SurfaceFlinger 1008 i32 0"; sleep 2
 
-		# CRITICAL ordering (PORTING_LOG §64/§61): only apply the fakecablein shield +
-		# repair trio AFTER confirming the 1008 latch actually put external onto CLIENT
-		# composition. Shielding a latch that did NOT take gates the kthread's TX before
-		# it is configured -> no HDMI signal AND a wedged (black) primary panel. If the
-		# latch missed, retry cleanly instead of shielding a broken state.
-		C=$(dumpsys SurfaceFlinger | grep -A3 'DisplayDevice{1' | grep -c 'usesClientComposition=true')
-		if [ "$C" -lt 1 ]; then
-			xlog "latch $try: external not CLIENT-composited — skipping shield, retrying"
+		if [ "$(dumpsys SurfaceFlinger | grep -c 'DisplayDevice{1')" = 0 ]; then
+			xlog "attempt $try: display 1 not registered — retrying"
 			continue
 		fi
-
-		echo fakecablein:enable > $H
-		# The CG-ungate / DPI-EN / TMDS-CON3 repair trio is done by the kernel since
-		# §81 (keep-alive in hdmi_timer_impl, ~2 Hz). Only poke the registers by hand
-		# if the keep-alive has been turned off or an old kernel is running.
-		if [ "$(getprop persist.sys.xdplus.hdmi_trio)" = "1" ]; then
-			echo regw:0x14000118=0x300      > $H
-			echo regw:0x1401d000=1          > $H
-			echo regw:0x1020910c=0xff0f0000 > $H
-			xlog "applied userspace repair trio (hdmi_trio=1)"
+		# Keyguard/presentation check: mirroring means the external display is on
+		# the default layer stack. Its own stack = something (usually the keyguard
+		# presentation) claimed it and the blob will refuse the mirror.
+		if ! dumpsys SurfaceFlinger | grep -A3 'DisplayDevice{1' | grep -q 'layerStack=0'; then
+			xlog "attempt $try: external display not mirroring stack 0 (keyguard?) — dismissing and retrying"
+			wm dismiss-keyguard; sleep 2
+			continue
 		fi
-		sleep 1
-		echo regr:0x1401d040 > $H; A=$(cat $H); sleep 0.4
-		echo regr:0x1401d040 > $H; B=$(cat $H)
-		if [ "$A" != "$B" ]; then
-			xlog "HDMI mirror up (scan $A->$B, external CLIENT-latched)"
-			apply_unfreeze
+		sleep 2
+		if dmesg | grep 'mode now' | tail -1 | grep -q DECOUPLE_MIRROR; then
+			xlog "HDMI mirror up (DECOUPLE_MIRROR, res=$RES)"
 			return 0
 		fi
-		xlog "latch $try: shield applied but scan not advancing ($A -> $B)"
+		xlog "attempt $try: display 1 up but session mode is not DECOUPLE_MIRROR — retrying"
 	done
 
 	# All attempts missed. Tear down cleanly so the primary panel is not left wedged
@@ -140,11 +123,15 @@ hdmi_up() {
 	echo fakecablein:disable > $H 2>/dev/null
 	$CTL power 0 2>/dev/null
 	$CTL disable 2>/dev/null
+	setprop debug.hwc.mirror_state 4
 	return 1
 }
 
 hdmi_down() {
 	[ -x "$CTL" ] && { $CTL power 0; $CTL disable; }
+	# Park the mirror queue gate so the next plain hotplug does not create the
+	# mirror output queue against a torn-down path.
+	setprop debug.hwc.mirror_state 4
 	xlog "HDMI torn down"
 }
 
@@ -178,11 +165,10 @@ fi
 case "$CMD" in
 	hdmi_up)   hdmi_up ;;
 	hdmi_down) hdmi_down ;;
-	# Live toggle from the menu (post-boot): safe to poke the composer.
-	unfreeze)  apply_unfreeze ;;
-	# Boot path: apply the persisted value but do NOT poke SurfaceFlinger while it
-	# is still settling. The composer picks it up on its next natural deviceDump.
-	boot)      apply_unfreeze ;;
+	# Boot path: nothing to re-apply since the un-freeze toggle was removed
+	# (is_skip_validate was §83 KNOWN-BAD: it unfreezes nothing and makes any
+	# freeze sticky across reboots). Kept as a hook for future persisted toggles.
+	boot)      : ;;
 	# Compile-progress relay: exits quietly, and must NOT clear sys.xdplus.action
 	# (it never set it).
 	vknotify)  vknotify; exit 0 ;;
