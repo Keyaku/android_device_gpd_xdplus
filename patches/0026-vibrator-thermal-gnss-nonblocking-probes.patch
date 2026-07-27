@@ -1,0 +1,122 @@
+From c1cd6552d168aa5c1ac57deb7f41b18501efa8a6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 27 Jul 2026 23:18:41 +0100
+Subject: [PATCH] vibrator/thermal/gnss: do not block on speculative HAL
+ version probes
+
+Same pattern as the sensors and gralloc ladders: each of these walks a
+list of HAL versions of which at most one exists, and this device has
+none of them, so every rung paid a service-lookup wait for nothing.
+
+A device that ships one of these versions has it in the manifest and
+running by the time the framework looks, so the speculative rungs have
+nothing to block for.
+
+Changes:
+- Vibrator: `HalWrapper::Create()` uses `tryGetService()`. Its own comment already treats a null result as "not available on the device", and the reconnect path was already non-blocking.
+- Thermal: the 2.0 / 1.1 / 1.0 lookups in `ThermalManagerService` pass `retry=false`.
+- GNSS: the 2.1 / 2.0 / 1.1 rungs use `tryGetService()`; the final 1.0 rung keeps its blocking call.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: I5f5291250656d23692dafae74005b3d191f4c47f
+---
+ .../android/server/power/ThermalManagerService.java  |  9 ++++++---
+ .../core/jni/com_android_server_VibratorService.cpp  |  9 ++++++++-
+ ..._android_server_location_GnssLocationProvider.cpp | 12 +++++++++---
+ 3 files changed, 23 insertions(+), 7 deletions(-)
+
+diff --git a/services/core/java/com/android/server/power/ThermalManagerService.java b/services/core/java/com/android/server/power/ThermalManagerService.java
+index ef4954aa..a9d5646e 100644
+--- a/services/core/java/com/android/server/power/ThermalManagerService.java
++++ b/services/core/java/com/android/server/power/ThermalManagerService.java
+@@ -760,7 +760,8 @@ public class ThermalManagerService extends SystemService {
+         protected boolean connectToHal() {
+             synchronized (mHalLock) {
+                 try {
+-                    mThermalHal10 = android.hardware.thermal.V1_0.IThermal.getService(true);
++                    // Speculative version probe (2.0 -> 1.1 -> 1.0), so do not retry-wait.
++                    mThermalHal10 = android.hardware.thermal.V1_0.IThermal.getService(false);
+                     mThermalHal10.linkToDeath(new DeathRecipient(),
+                             THERMAL_HAL_DEATH_COOKIE);
+                     Slog.i(TAG,
+@@ -895,7 +896,8 @@ public class ThermalManagerService extends SystemService {
+         protected boolean connectToHal() {
+             synchronized (mHalLock) {
+                 try {
+-                    mThermalHal11 = android.hardware.thermal.V1_1.IThermal.getService(true);
++                    // Speculative version probe (2.0 -> 1.1 -> 1.0), so do not retry-wait.
++                    mThermalHal11 = android.hardware.thermal.V1_1.IThermal.getService(false);
+                     mThermalHal11.linkToDeath(new DeathRecipient(),
+                             THERMAL_HAL_DEATH_COOKIE);
+                     mThermalHal11.registerThermalCallback(mThermalCallback11);
+@@ -1045,7 +1047,8 @@ public class ThermalManagerService extends SystemService {
+         protected boolean connectToHal() {
+             synchronized (mHalLock) {
+                 try {
+-                    mThermalHal20 = android.hardware.thermal.V2_0.IThermal.getService(true);
++                    // Speculative version probe (2.0 -> 1.1 -> 1.0), so do not retry-wait.
++                    mThermalHal20 = android.hardware.thermal.V2_0.IThermal.getService(false);
+                     mThermalHal20.linkToDeath(new DeathRecipient(), THERMAL_HAL_DEATH_COOKIE);
+                     mThermalHal20.registerThermalChangedCallback(mThermalCallback20, false,
+                             0 /* not used */);
+diff --git a/services/core/jni/com_android_server_VibratorService.cpp b/services/core/jni/com_android_server_VibratorService.cpp
+index 05aa3594..31758d44 100644
+--- a/services/core/jni/com_android_server_VibratorService.cpp
++++ b/services/core/jni/com_android_server_VibratorService.cpp
+@@ -169,7 +169,14 @@ class HalWrapper {
+     static std::unique_ptr<HalWrapper> Create() {
+         // Assume that if getService returns a nullptr, HAL is not available on the
+         // device.
+-        auto hal = getService<I>();
++        //
++        // Speculative version probe: this is called down a ladder (AIDL, then
++        // 1.3 .. 1.0) and at most one rung exists. Since a null result is
++        // already taken to mean "not available on the device", there is nothing
++        // to block for -- and on a device with no vibrator HAL at all, every
++        // rung would otherwise pay the service-lookup wait. Reconnection below
++        // already uses the non-blocking form.
++        auto hal = tryGetService<I>();
+         return hal ? std::unique_ptr<HalWrapper>(new HalWrapper(std::move(hal))) : nullptr;
+     }
+ 
+diff --git a/services/core/jni/com_android_server_location_GnssLocationProvider.cpp b/services/core/jni/com_android_server_location_GnssLocationProvider.cpp
+index 465a3518..8d222c3a 100644
+--- a/services/core/jni/com_android_server_location_GnssLocationProvider.cpp
++++ b/services/core/jni/com_android_server_location_GnssLocationProvider.cpp
+@@ -1902,8 +1902,14 @@ struct GnssBatchingCallback_V2_0 : public IGnssBatchingCallback_V2_0 {
+ 
+ /* Initializes the GNSS service handle. */
+ static void android_location_GnssLocationProvider_set_gps_service_handle() {
++    // Speculative version probes: the ladder below tries 2.1, 2.0 and 1.1 in
++    // turn and at most one of them exists. A device that ships one of those
++    // versions has it in the manifest and running by now, so there is nothing to
++    // block for -- while a device with no GNSS HAL at all (or an older one)
++    // would otherwise pay the service-lookup wait on every rung. The final 1.0
++    // rung keeps its blocking getService().
+     ALOGD("Trying IGnss_V2_1::getService()");
+-    gnssHal_V2_1 = IGnss_V2_1::getService();
++    gnssHal_V2_1 = IGnss_V2_1::tryGetService();
+     if (gnssHal_V2_1 != nullptr) {
+         gnssHal = gnssHal_V2_1;
+         gnssHal_V2_0 = gnssHal_V2_1;
+@@ -1913,7 +1919,7 @@ static void android_location_GnssLocationProvider_set_gps_service_handle() {
+     }
+ 
+     ALOGD("gnssHal 2.1 was null, trying 2.0");
+-    gnssHal_V2_0 = IGnss_V2_0::getService();
++    gnssHal_V2_0 = IGnss_V2_0::tryGetService();
+     if (gnssHal_V2_0 != nullptr) {
+         gnssHal = gnssHal_V2_0;
+         gnssHal_V1_1 = gnssHal_V2_0;
+@@ -1921,7 +1927,7 @@ static void android_location_GnssLocationProvider_set_gps_service_handle() {
+     }
+ 
+     ALOGD("gnssHal 2.0 was null, trying 1.1");
+-    gnssHal_V1_1 = IGnss_V1_1::getService();
++    gnssHal_V1_1 = IGnss_V1_1::tryGetService();
+     if (gnssHal_V1_1 != nullptr) {
+         gnssHal = gnssHal_V1_1;
+         return;
+-- 
+2.55.0
+
