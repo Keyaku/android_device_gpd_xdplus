@@ -59,6 +59,8 @@
 #define PROGRESS_PROP "sys.xdplus.vkcompile"
 // A single batch slower than this marks the whole session as worth notifying.
 #define SLOW_NS (2ull * 1000000000ull)
+// Floor on how often the cache is flushed to disk mid-session; see save_disk_cache.
+#define SAVE_MIN_INTERVAL_NS (30ull * 1000000000ull)
 
 static hwvulkan_module_t *real_module;
 static PFN_vkGetInstanceProcAddr real_gipa;
@@ -87,8 +89,15 @@ static VkDevice cache_dev;
 static VkPipelineCache disk_cache;
 static char cache_path[192];
 static size_t last_saved_size;
+static unsigned long long last_save_ns;
 static unsigned compiled_count;
 static int slow_session;
+
+static unsigned long long now_ns(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (unsigned long long)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+}
 
 static const char *pkg_name(void) {
 	static char pkg[96];
@@ -158,16 +167,30 @@ static VkPipelineCache ensure_disk_cache(VkDevice dev) {
 	cache_dev = dev;
 	disk_cache = pc;
 	last_saved_size = initial_size;
+	last_save_ns = now_ns();
 	LOGI("pipeline cache ready (%s, primed %zu bytes)", cache_path, initial_size);
 	return pc;
 }
 
-// Called with cache_mu held.
-static void save_disk_cache(VkDevice dev) {
+// Called with cache_mu held. `force` bypasses the rate limit for the one save
+// that must not be skipped — the device going away.
+//
+// Serialising the cache is O(cache), and the cache only grows: a mature
+// RetroArch cache is ~55 MB, so a save is a 55 MB serialise into a 55 MB malloc
+// followed by a 55 MB write. Doing that after every batch, with cache_mu held
+// so no other thread can compile meanwhile, is what ANR'd RetroArch when
+// SwanStation was switched to Vulkan — the whole app sat in __memcpy inside
+// vkGetPipelineCacheData while input dispatch timed out. Losing the last few
+// seconds of compiles on a kill costs one recompile; blocking every compile
+// behind a 55 MB flush costs the session.
+static void save_disk_cache(VkDevice dev, int force) {
 	if (disk_cache == VK_NULL_HANDLE || !real_gpcd || !cache_path[0]) return;
+	unsigned long long now = now_ns();
+	if (!force && last_save_ns && now - last_save_ns < SAVE_MIN_INTERVAL_NS) return;
 	size_t size = 0;
 	if (real_gpcd(dev, disk_cache, &size, NULL) != VK_SUCCESS || size == 0) return;
 	if (size == last_saved_size) return;
+	last_save_ns = now;
 	void *data = malloc(size);
 	if (!data) return;
 	if (real_gpcd(dev, disk_cache, &size, data) == VK_SUCCESS) {
@@ -193,12 +216,6 @@ static void publish_progress(void) {
 	char v[92];
 	snprintf(v, sizeof(v), "%s:%u", pkg_name(), compiled_count);
 	__system_property_set(PROGRESS_PROP, v);
-}
-
-static unsigned long long now_ns(void) {
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (unsigned long long)ts.tv_sec * 1000000000ull + ts.tv_nsec;
 }
 
 // ---- big-stack trampoline -------------------------------------------------
@@ -261,7 +278,7 @@ static VkResult compile_batch(void *(*fn)(void *), void *args, VkResult *slot,
 	if (shim_cache != VK_NULL_HANDLE) {
 		if (app_cache != VK_NULL_HANDLE && real_mpc)
 			real_mpc(dev, shim_cache, 1, &app_cache);
-		save_disk_cache(dev);
+		save_disk_cache(dev, 0);
 	}
 	pthread_mutex_unlock(&cache_mu);
 	return r;
@@ -377,12 +394,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateSampler(
 // when it is already dead and the handle must not be touched again.
 static void drop_disk_cache(VkDevice dev) {
 	if (disk_cache != VK_NULL_HANDLE && dev) {
-		save_disk_cache(dev);
+		save_disk_cache(dev, 1);
 		if (real_dpc) real_dpc(dev, disk_cache, NULL);
 	}
 	disk_cache = VK_NULL_HANDLE;
 	cache_dev = NULL;
 	last_saved_size = 0;
+	last_save_ns = 0;
 	cache_path[0] = '\0';
 }
 
