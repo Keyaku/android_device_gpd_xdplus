@@ -32,7 +32,7 @@ cc_binary {
 
 // Binderized keymaster@3.0 service backed by the MT8173 TEE. Passthrough-loads
 // the vendor android.hardware.keymaster@3.0-impl.so (now loadable — libtz_uree.so
-// restored, PORTING_LOG §29) which wraps the trustlet HAL keystore.mt8173.so.
+// restored) which wraps the trustlet HAL keystore.mt8173.so.
 // keystore's support::Keymaster3 adapter presents it as a 4.x TRUSTED_ENVIRONMENT.
 cc_binary {
 	name: "android.hardware.keymaster@3.0-service.xdplus",
@@ -78,10 +78,10 @@ cc_binary {
 
 // Binderized gatekeeper@1.0 service backed by the MT8173 TEE. hw_get_module
 // ("gatekeeper")s the trustlet HAL gatekeeper.mt8173.so (loadable since
-// libtz_uree.so was restored, §29; enroll/verify proven by the §31 spike) and
+// libtz_uree.so was restored; enroll/verify proven by the TEE spike) and
 // wraps it with the AOSP passthrough adapter (gk_tee_adapter.*). Registers as
 // IGatekeeper/default so gatekeeperd's HardwareAuthToken shares the trustlet
-// root of trust with the §30 HW keymaster — fixes the -26 PIN regression.
+// root of trust with the HW keymaster — fixes the -26 PIN regression.
 // Falls back to the software gatekeeper if the trustlet won't open.
 cc_binary {
 	name: "android.hardware.gatekeeper@1.0-service.xdplus",

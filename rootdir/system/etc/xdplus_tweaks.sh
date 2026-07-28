@@ -4,7 +4,7 @@
 # sys.xdplus.*/persist.sys.xdplus.* props; all root-side work happens here.
 #
 # Usage: xdplus_tweaks.sh <command>
-#   hdmi_up      mini-HDMI DECOUPLE_MIRROR bringup (PORTING_LOG §117/§118)
+#   hdmi_up      mini-HDMI DECOUPLE_MIRROR bringup
 #   hdmi_down    tear HDMI down, return to built-in panel only
 #   boot         re-apply persisted toggles at boot_completed (currently a no-op)
 
@@ -13,7 +13,7 @@ H=/d/hdmi
 # a fallback for devices flashed before that landed.
 CTL=/system/bin/hdmictl
 [ -x "$CTL" ] || CTL=/data/local/tmp/hdmictl
-# The acqfd-patched HWC blob lives in the VENDOR PARTITION since §72 — no bind
+# The acqfd-patched HWC blob lives in the VENDOR PARTITION — no bind
 # mount, no composer restart, survives reboots. BLOB is only the legacy fallback.
 BLOB=/data/local/tmp/hwcomposer.patched.so
 VBLOB=/system/vendor/lib64/hw/hwcomposer.mt8173.so
@@ -23,15 +23,15 @@ VBLOB_MD5=54b28199
 # binary and recurses infinitely, hanging the service. Use the binary by full path.
 xlog() { /system/bin/log -t xdplus_tweaks "$*" 2>/dev/null; echo "xdplus_tweaks: $*"; }
 
-# DECOUPLE_MIRROR bringup (§117/§118). The panel stays on hardware overlays
+# DECOUPLE_MIRROR bringup. The panel stays on hardware overlays
 # (OVL0 -> WDMA0 -> RDMA0) and the external display is fed by the MDP blit — no
-# GPU composition on either pipe. Replaces the old 1008-latch path (§64-§90),
+# GPU composition on either pipe. Replaces the old 1008-latch path,
 # which forced the external display onto GPU CLIENT composition and left the
-# panel frozen while mirroring (§114).
+# panel frozen while mirroring.
 #
 # Preconditions, all discovered the hard way:
 #  - persist.sys.xdplus.hdmi_force_validate must have been 0 AT BOOT.
-#    SurfaceFlinger reads it once at startup; §90's forced validate makes the
+#    SurfaceFlinger reads it once at startup; the forced validate makes the
 #    external display CLIENT-composed with a single layer, the blob's
 #    isMirrorList then fails (chkMir L3819), and no live prop write can fix it.
 #  - debug.hwc.mirror_state must be 1 BEFORE display 1 hotplugs: the mirror
@@ -65,7 +65,7 @@ hdmi_up() {
 	fi
 
 	# Mirror queue gate + optional dispatcher pacing knob. Both are debug.hwc.*
-	# props the blob only re-reads inside HWCMediator::deviceDump (§67), so latch
+	# props the blob only re-reads inside HWCMediator::deviceDump, so latch
 	# them with a dumpsys BEFORE the display registers.
 	setprop debug.hwc.mirror_state 1
 	if [ "$(getprop persist.sys.xdplus.hdmi_novsync)" = "1" ]; then
@@ -78,12 +78,12 @@ hdmi_up() {
 	input keyevent 224; sleep 1
 	wm dismiss-keyguard; sleep 2
 
-	# §84: the debugfs nodes can come up 0444, which makes every write below fail
+	# NOTE: the debugfs nodes can come up 0444, which makes every write below fail
 	# with "Permission denied" even as root.
 	chmod 666 $H /d/dispsys 2>/dev/null
 
 	xlog "kernel bringup (res=$RES)"
-	# No 'disable' step: since §81 the kernel no longer presets is_enabled, so a
+	# No 'disable' step: the kernel no longer presets is_enabled, so a
 	# single enable runs hdmi_drv_init() and creates hdmi_rdma_config_kthread.
 	$CTL enable;  sleep 2
 	$CTL power 1; sleep 3
@@ -166,7 +166,7 @@ case "$CMD" in
 	hdmi_up)   hdmi_up ;;
 	hdmi_down) hdmi_down ;;
 	# Boot path: nothing to re-apply since the un-freeze toggle was removed
-	# (is_skip_validate was §83 KNOWN-BAD: it unfreezes nothing and makes any
+	# (is_skip_validate was KNOWN-BAD: it unfreezes nothing and makes any
 	# freeze sticky across reboots). Kept as a hook for future persisted toggles.
 	boot)      : ;;
 	# Compile-progress relay: exits quietly, and must NOT clear sys.xdplus.action

@@ -126,7 +126,7 @@ DEVICE_MANIFEST_FILE := $(LOCAL_PATH)/manifest.xml
 # here — this device is legacy system-as-root (init "Switching root to
 # '/system'"), so /vendor lives INSIDE the system image and COPY_OUT=vendor
 # makes system/vendor a symlink -> /vendor, i.e. /vendor -> /vendor, a mount
-# loop ("Too many symbolic links", fastboot bounce). PORTING_LOG §46. Vendor
+# loop ("Too many symbolic links", fastboot bounce). Vendor
 # stays the physical mmcblk0p23 partition shadow-mounted at /system/vendor;
 # it is written by the OTA via the releasetools.py raw package_extract_file.
 BOARD_BOOTIMAGE_PARTITION_SIZE := 0x01000000

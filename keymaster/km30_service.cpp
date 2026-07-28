@@ -18,7 +18,7 @@
 //
 // It hw_get_module("keystore")s the real trustlet HAL keystore.mt8173.so (a
 // keymaster1 hw_module, "Keymaster MTEE based HAL", reachable only once
-// libtz_uree.so was restored to /vendor — TEE spike, PORTING_LOG §29) and wraps
+// libtz_uree.so was restored to /vendor — TEE spike) and wraps
 // it to a 3.0 HIDL IKeymasterDevice with the R ng:: factory (libkeymaster3device,
 // keymaster1_passthrough_context path). We deliberately do NOT reuse the vendor
 // android.hardware.keymaster@3.0-impl.so: that blob is an O-era build linked

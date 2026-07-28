@@ -110,9 +110,9 @@ PRODUCT_PACKAGES += libshim_callstack libshim_logbase libshim_audio libshim_wifi
 # `class charger`) — offline charging only, normal boot never starts it.
 PRODUCT_PACKAGES += healthd
 # Normal-boot health@2.1: without a registered IHealth, BatteryService stalls
-# ~4 s on getService before falling back (§45, largest single boot-time item).
+# ~4 s on getService before falling back (largest single boot-time item).
 # Self-contained system-side service (health/service.cpp) — registers the default
-# health impl in-process, no vendor passthrough .so (§46). `class hal` only, so it
+# health impl in-process, no vendor passthrough .so. `class hal` only, so it
 # never coexists with the charger-mode healthd above.
 PRODUCT_PACKAGES += android.hardware.health@2.1-service.xdplus
 
@@ -126,13 +126,13 @@ PRODUCT_COPY_FILES += $(foreach c,$(wildcard device/gpd/xdplus/ota/cacerts/*.0),
 
 # System_ext keymaster + gatekeeper (see keymaster/Android.bp).
 # - keymaster@3.0-service.xdplus: binderized, TEE-backed (wraps trustlet HAL
-#   keystore.mt8173.so via the now-loadable vendor impl; PORTING_LOG §29+§30).
+#   keystore.mt8173.so via the now-loadable vendor impl).
 #   Provides the real TRUSTED_ENVIRONMENT keymaster for FBE.
 # - keymaster@4.1-service.xdplus: software fallback (SOFTWARE slot / legacy keys).
 # - gatekeeper@1.0-service.xdplus: binderized, TEE-backed (wraps trustlet HAL
-#   gatekeeper.mt8173.so; §31 spike proved enroll/verify with no libgatekeeper_mtee).
+#   gatekeeper.mt8173.so; the TEE spike proved enroll/verify with no libgatekeeper_mtee).
 #   Shares the trustlet root of trust with the HW keymaster so HardwareAuthTokens
-#   are accepted — fixes the §30 -26 KEY_USER_NOT_AUTHENTICATED PIN regression.
+#   are accepted — fixes the -26 KEY_USER_NOT_AUTHENTICATED PIN regression.
 #   Falls back to software gatekeeper internally if the trustlet won't open.
 PRODUCT_PACKAGES += android.hardware.keymaster@3.0-service.xdplus android.hardware.keymaster@4.1-service.xdplus android.hardware.gatekeeper@1.0-service.xdplus
 
@@ -157,7 +157,7 @@ PRODUCT_PACKAGES += vulkan.mt8173
 
 # mini-HDMI bringup helper (see hdmi/Android.mk). Sends the MTK_HDMI_* ioctls
 # the vendor HWC blob never sends. Baked in so xdplus_tweaks.sh's HDMI actions
-# no longer depend on an artifact hand-pushed to /data/local/tmp (§69).
+# no longer depend on an artifact hand-pushed to /data/local/tmp.
 PRODUCT_PACKAGES += hdmictl
 
 # Old HIDL libs the vendor audio HAL links against (not installed by default in R)

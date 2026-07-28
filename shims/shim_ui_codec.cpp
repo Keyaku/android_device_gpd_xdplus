@@ -3,7 +3,7 @@
  * (libMtkOmxVdecEx.so, libMtkOmxVenc.so). Without these, MtkOmxCore's dlopen
  * of the per-codec libs fails and every OMX.MTK.VIDEO.* component silently
  * drops out of MediaCodecList — apps that require a hardware decoder
- * (Moonlight, etc.) then see no H.264/HEVC support at all (§50).
+ * (Moonlight, etc.) then see no H.264/HEVC support at all.
  *
  * 1. GraphicBufferMapper::lock(buffer_handle_t, uint32_t, const Rect&, void**)
  *    R replaced the 4-arg export with a 6-arg one taking optional
@@ -53,7 +53,7 @@ struct FenceLayout {
 // garbage in r0 and crashed the decoder with free(0xffffffff). Declare the
 // shims to return the object pointer.
 extern "C" void* _ZN7android5FenceD1Ev(FenceLayout* thiz) {
-	// Guard the caller's trailing free()/operator delete (§51). WaitFence (and
+	// Guard the caller's trailing free()/operator delete. WaitFence (and
 	// the HEVC decode path) feed this dtor's return value straight into a
 	// delete/free. If the "Fence" was never a real heap object — an
 	// uninitialised −1 handle, seen as the HEVC SIGABRT "frees uninit −1 fence"
