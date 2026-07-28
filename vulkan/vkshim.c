@@ -98,12 +98,21 @@ static PFN_vkCreateSampler real_cs;
 
 // ---- persistent pipeline cache --------------------------------------------
 
-// cache_mu covers disk_cache and everything derived from it, and is held across
-// the whole pipeline-creation batch — not just the bookkeeping around it.
+// cache_mu covers disk_cache and everything derived from it. It is held for the
+// short bookkeeping either side of a batch, never across the compile itself.
+//
+// pipelineCache is an externally-synchronised parameter on
 // vkCreateGraphicsPipelines/vkCreateComputePipelines/vkMergePipelineCaches/
-// vkGetPipelineCacheData all take pipelineCache as an externally-synchronised
-// parameter, and once the shim substitutes one cache for every caller, two app
-// threads compiling at once are two threads mutating one cache object.
+// vkGetPipelineCacheData alike, and substituting one cache for every caller
+// manufactures exactly the sharing that rule forbids — so only one batch at a
+// time may hold the shared cache (master_in_use). A batch that arrives while it
+// is taken does NOT wait: it compiles against a private scratch cache and hands
+// that back to be merged afterwards.
+//
+// Holding the lock across the compile instead was tried and is what made the
+// fast-forward ANR: a USC compile runs for seconds, and RetroArch's own
+// render/input thread ended up parked on this mutex behind a SwanStation core
+// compile, so input dispatch timed out. Never put a compile inside this lock.
 static pthread_mutex_t cache_mu = PTHREAD_MUTEX_INITIALIZER;
 static VkDevice cache_dev;
 static VkPipelineCache disk_cache;
@@ -111,6 +120,16 @@ static char cache_path[192];
 static size_t last_saved_size;
 static unsigned long long last_save_ns;
 static int cache_frozen;
+// Non-zero while some batch is compiling with disk_cache; nothing else may hand
+// it out, merge into it or serialise it until that batch is done.
+static int master_in_use;
+// Scratch caches from batches that finished while the master was busy, waiting
+// to be merged. Bounded: past this many, a scratch is dropped rather than
+// queued, which costs one recompile of that batch on a later run and nothing else.
+#define PENDING_MAX 8
+static VkPipelineCache pending_merge[PENDING_MAX];
+static unsigned pending_count;
+static int warned_pending_full;
 static unsigned compiled_count;
 static int slow_session;
 
@@ -299,6 +318,8 @@ static void save_disk_cache(VkDevice dev, int force) {
 	free(data);
 }
 
+static void drain_pending(VkDevice dev);
+
 static void publish_progress(void) {
 	char v[92];
 	snprintf(v, sizeof(v), "%s:%u", pkg_name(), compiled_count);
@@ -345,29 +366,82 @@ static VkResult run_big_stack(void *(*fn)(void *), void *args, VkResult *slot) {
 	return *slot;
 }
 
+// Called with cache_mu held and the master free. Folds in everything that was
+// compiled while the master was busy.
+static void drain_pending(VkDevice dev) {
+	if (!pending_count) return;
+	if (real_mpc && disk_cache != VK_NULL_HANDLE && cache_dev == dev)
+		real_mpc(dev, disk_cache, pending_count, pending_merge);
+	if (real_dpc) {
+		for (unsigned i = 0; i < pending_count; i++)
+			real_dpc(dev, pending_merge[i], NULL);
+	}
+	pending_count = 0;
+}
+
 // Wraps one pipeline-creation batch: cache substitution/merge + persistence +
-// progress accounting around the big-stack call.
+// progress accounting around the big-stack call. The compile runs with no lock
+// held — see cache_mu.
 static VkResult compile_batch(void *(*fn)(void *), void *args, VkResult *slot,
 	VkDevice dev, VkPipelineCache *cache_slot, uint32_t n) {
+	const VkPipelineCache app_cache = *cache_slot;
+	VkPipelineCache scratch = VK_NULL_HANDLE;
+	int own_master = 0;
+
 	pthread_mutex_lock(&cache_mu);
 	VkPipelineCache shim_cache = ensure_disk_cache(dev);
-	VkPipelineCache app_cache = *cache_slot;
-	if (app_cache == VK_NULL_HANDLE && shim_cache != VK_NULL_HANDLE)
+	if (app_cache == VK_NULL_HANDLE && shim_cache != VK_NULL_HANDLE && !master_in_use) {
+		master_in_use = 1;
+		own_master = 1;
 		*cache_slot = shim_cache;
+	}
+	pthread_mutex_unlock(&cache_mu);
+
+	if (!own_master && app_cache == VK_NULL_HANDLE && real_cpc) {
+		// Master taken: compile against our own cache rather than queueing
+		// behind a compile that may run for seconds. Empty, so this batch pays
+		// full price, but its result is merged back and kept.
+		VkPipelineCacheCreateInfo ci = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+		};
+		if (real_cpc(dev, &ci, NULL, &scratch) == VK_SUCCESS)
+			*cache_slot = scratch;
+		else
+			scratch = VK_NULL_HANDLE;
+	}
 
 	unsigned long long t0 = now_ns();
 	VkResult r = run_big_stack(fn, args, slot);
 	unsigned long long dt = now_ns() - t0;
 
+	pthread_mutex_lock(&cache_mu);
 	compiled_count += n;
 	if (dt > SLOW_NS) slow_session = 1;
 	if (slow_session) publish_progress();
-	if (shim_cache != VK_NULL_HANDLE) {
+
+	if (own_master) {
+		master_in_use = 0;
 		if (app_cache != VK_NULL_HANDLE && real_mpc)
 			real_mpc(dev, shim_cache, 1, &app_cache);
+		drain_pending(dev);
 		save_disk_cache(dev, 0);
+	} else if (scratch != VK_NULL_HANDLE) {
+		if (!master_in_use && real_mpc && disk_cache != VK_NULL_HANDLE
+				&& cache_dev == dev) {
+			real_mpc(dev, disk_cache, 1, &scratch);
+			drain_pending(dev);
+			save_disk_cache(dev, 0);
+		} else if (pending_count < PENDING_MAX) {
+			pending_merge[pending_count++] = scratch;
+			scratch = VK_NULL_HANDLE;   // owned by the queue now
+		} else if (!warned_pending_full) {
+			warned_pending_full = 1;
+			LOGI("pipeline cache merge queue full, dropping a scratch cache");
+		}
 	}
 	pthread_mutex_unlock(&cache_mu);
+
+	if (scratch != VK_NULL_HANDLE && real_dpc) real_dpc(dev, scratch, NULL);
 	return r;
 }
 
@@ -480,6 +554,15 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateSampler(
 // Called with cache_mu held. `dev` is the device the cache belongs to, or NULL
 // when it is already dead and the handle must not be touched again.
 static void drop_disk_cache(VkDevice dev) {
+	// Scratch caches waiting to be merged belong to this device too — fold in
+	// what we can and free the rest before the device goes.
+	if (dev) drain_pending(dev);
+	if (real_dpc && dev) {
+		for (unsigned i = 0; i < pending_count; i++)
+			real_dpc(dev, pending_merge[i], NULL);
+	}
+	pending_count = 0;
+	master_in_use = 0;
 	if (disk_cache != VK_NULL_HANDLE && dev) {
 		save_disk_cache(dev, 1);
 		if (real_dpc) real_dpc(dev, disk_cache, NULL);
