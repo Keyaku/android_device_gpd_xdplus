@@ -8,7 +8,7 @@ Content-Transfer-Encoding: 8bit
 
 `getRawServiceInternal` slept 1 s unconditionally whenever the VINTF
 manifest is not enforced, to give a not-yet-registered non-manifest HAL a
-chance to come up. This device does not enforce VINTF (PORTING_LOG §39),
+chance to come up. This device does not enforce VINTF,
 so *every* getService() on the system paid that second up front --
 including every lookup that would have succeeded immediately. It is the
 single largest boot-time item on this port, worth far more than the
@@ -50,7 +50,7 @@ index a7e9626..19b2d54 100644
 -    }
 +    // XDPLUS (boot time): upstream slept 1 s *unconditionally* here whenever the
 +    // VINTF manifest is not enforced, to give a not-yet-registered non-manifest
-+    // HAL a grace period. This device does not enforce VINTF (§39), so every
++    // HAL a grace period. This device does not enforce VINTF, so every
 +    // single getService() on the whole system paid that second -- including the
 +    // ones that would have succeeded immediately. Instead, take the grace period
 +    // lazily: attempt the lookup first, and only sleep+retry once if it failed.

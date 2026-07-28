@@ -69,4 +69,4 @@ The series must reproduce the working trees. Verify with `git -C <repo> apply --
 
 **Deliberately uncaptured in-tree commits** (a from-patches build is correct but will not byte-match the running artifacts): `frameworks/native` `048d9f1dbf`, `b45909b9f9`, `a806d21d98`. All three are prop-gated off; drop or capture them when the HDMI hunt ends.
 
-**Last verified 2026-07-27: 26/26 clean** (24 standalone, `0016` + `0017` clean under the cumulative procedure above). Re-run in full after `0025`–`0026` were added.
+**Last verified 2026-07-28: 26/26 clean** (24 standalone, `0016` + `0017` clean under the cumulative procedure above). Re-run in full after the comment sweep that removed the out-of-repo doc citations from both the patches and the upstream trees.

@@ -49,7 +49,7 @@ index 14866c8..006c615 100644
 +        // restore, WifiLockManager) tries to re-enable it. The kick only bites
 +        // under sustained transfer, which implies an interactive session, so
 +        // the pin applies while the screen is on; with the screen off PS is
-+        // allowed back so the radio dozes (standby drain, PORTING_LOG §94).
++        // allowed back so the radio dozes (standby drain).
 +        if (ps && mScreenOn
 +                && SystemProperties.getBoolean("persist.sys.wifi_ps_pin_off", false)) {
 +            ps = false;

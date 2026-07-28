@@ -39,7 +39,7 @@ index dcb2b27117..ae33f6d8ca 100644
          return;
      }
  
-+    // GPD XD+ (§103): hardware vsync is alive, so hold the watchdog off and clear
++    // GPD XD+: hardware vsync is alive, so hold the watchdog off and clear
 +    // the escalation counter.
 +    if (mHWVsyncWatchdog) {
 +        mHWVsyncWatchdogAttempts = 0;
@@ -54,7 +54,7 @@ index dcb2b27117..ae33f6d8ca 100644
          }
      }
 +
-+    // GPD XD+ (§103): start the watchdog's window fresh when vsync is turned on,
++    // GPD XD+: start the watchdog's window fresh when vsync is turned on,
 +    // so the first check happens a full timeout after the request rather than
 +    // inheriting a stale deadline.
 +    if (mHWVsyncWatchdog && enabled) {
@@ -66,15 +66,15 @@ index dcb2b27117..ae33f6d8ca 100644
 @@ -2500,31 +2514,111 @@ void SurfaceFlinger::processDisplayHotplugEventsLocked() {
      mPendingHotplugEvents.clear();
  
-     // GPD XD+ (§102): re-arm the primary display's HWC vsync after any hotplug.
+     // GPD XD+: re-arm the primary display's HWC vsync after any hotplug.
 +    // See kickHWCVsyncLocked(). This covers the synchronous case; the watchdog
-+    // in §103 covers the vendor composer dropping vsync asynchronously, after
++    // covers the vendor composer dropping vsync asynchronously, after
 +    // this function has already returned.
 +    kickHWCVsyncLocked();
 +}
 +
 +void SurfaceFlinger::kickHWCVsyncLocked() {
-+    // GPD XD+ (§102/§103): force the internal display's HWC vsync off and back
++    // GPD XD+: force the internal display's HWC vsync off and back
 +    // on to resynchronize a composer that has silently stopped generating it.
      //
      // setPrimaryVsyncEnabledInternal() stores mHWCVsyncPendingState but only
@@ -125,7 +125,7 @@ index dcb2b27117..ae33f6d8ca 100644
 +}
 +
 +void SurfaceFlinger::onHWVsyncWatchdogTimeout() {
-+    // GPD XD+ (§103): no hardware vsync has arrived for kHWVsyncWatchdogTimeout
++    // GPD XD+: no hardware vsync has arrived for kHWVsyncWatchdogTimeout
 +    // while we believe it is enabled, so the composer has stopped delivering it
 +    // and SF has lost its clock (nothing composes, both displays freeze with the
 +    // hardware still scanning out).
@@ -194,7 +194,7 @@ index dcb2b27117..ae33f6d8ca 100644
      mScheduler->onPrimaryDisplayConfigChanged(mAppConnectionHandle, primaryDisplayId.value,
                                                currentConfig, vsyncPeriod);
 +
-+    // GPD XD+ (§103): hardware-vsync watchdog. onVsyncReceived() resets it, so it
++    // GPD XD+: hardware-vsync watchdog. onVsyncReceived() resets it, so it
 +    // only expires when the composer has stopped delivering vsync while we
 +    // believe it is enabled — see onHWVsyncWatchdogTimeout().
 +    mHWVsyncWatchdog.emplace(kHWVsyncWatchdogTimeout, []() {} /* resetCallback */,
@@ -211,7 +211,7 @@ index 642eed05b4..9ea1344e5b 100644
      nsecs_t mScheduledPresentTime = 0;
      hal::Vsync mHWCVsyncPendingState = hal::Vsync::DISABLE;
  
-+    // GPD XD+ (§102/§103): recover from a composer that stops delivering
++    // GPD XD+: recover from a composer that stops delivering
 +    // hardware vsync while SF still believes it is enabled, which otherwise
 +    // freezes both displays until a screen off/on cycle. The watchdog is reset by
 +    // every vsync in onVsyncReceived(), so it only expires when they stop.

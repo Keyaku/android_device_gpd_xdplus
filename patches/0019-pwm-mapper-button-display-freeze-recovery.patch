@@ -47,10 +47,10 @@ index 28724e2e..1c40c8d0 100644
      static final int DOUBLE_TAP_HOME_NOTHING = 0;
      static final int DOUBLE_TAP_HOME_RECENT_SYSTEM_UI = 1;
  
-+    // GPD XD+ (§104): delay between the sleep and the wake of the spare-button
++    // GPD XD+: delay between the sleep and the wake of the spare-button
 +    // display-freeze recovery, so the composer actually tears down in between.
 +    static final long XDPLUS_RECOVERY_WAKE_DELAY_MS = 700;
-+    // GPD XD+ (§105): the bounce revives the panel but not the mirror, so the
++    // GPD XD+: the bounce revives the panel but not the mirror, so the
 +    // bring-up is re-dispatched afterwards — late enough for the framework to have
 +    // settled after the wake.
 +    static final long XDPLUS_RECOVERY_HDMI_UP_DELAY_MS = 3000;
@@ -63,7 +63,7 @@ index 28724e2e..1c40c8d0 100644
              }
  
 +            case KeyEvent.KEYCODE_F12: {
-+                // GPD XD+ (§104): display-freeze recovery on the spare "Gamepad
++                // GPD XD+: display-freeze recovery on the spare "Gamepad
 +                // Mapper" hardware button (kernel scancode 88, mapped to the
 +                // otherwise unused F12 in mtk-kpd.kl).
 +                //
@@ -116,7 +116,7 @@ index 28724e2e..1c40c8d0 100644
      }
  
 +    /**
-+     * GPD XD+ (§105): is an HDMI cable/monitor attached?
++     * GPD XD+: is an HDMI cable/monitor attached?
 +     *
 +     * The Mapper-button recovery only exists to repair a mirror-induced display
 +     * freeze, so with nothing plugged in the button must stay a no-op rather than
