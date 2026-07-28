@@ -1,5 +1,35 @@
 # xdplus system-side init additions.
 
+# --- Disable MTK hotplug (hps) before it can run, not after --------------------
+# /vendor/etc/init/hw/init.mt8173.rc already disables hps and forces all six cores
+# online, with the comment "it causes noticeable stutters" — but under `on boot`,
+# long after the damage. hps takes CPU5 and CPU4 offline ~3 ms apart at 7.9-9.1 s,
+# roughly 80 ms BEFORE zygote starts. Taking the last big core offline tears down
+# the A72 cluster's cpufreq policy, and it is never re-registered:
+# /sys/devices/system/cpu/cpu4/cpufreq/ does not exist for the rest of that boot
+# even though `online` still reads 0-5. The A72s then run unscaled at their boot
+# OPP and cpu0 sits pegged at 1703 MHz carrying the whole machine alone — that is
+# the entire 24-40 s "identical image boots at different speeds" spread (§124).
+#
+# `on init` is the earliest trigger that runs after the kernel's procfs exists
+# (hps registers its proc entries from a device_initcall, well before init), and
+# it is ~5 s ahead of the first hps down-migration. Writing a path that does not
+# exist is a logged no-op, so this is safe if the driver is ever compiled out.
+#
+# NOTE this does not fix the underlying kernel bug — the big cluster's cpufreq
+# policy still fails to come back after a full-cluster offline during boot. It
+# stops the only thing that triggers it. A runtime offline/online cycle of CPU4+5
+# after boot restores the policy correctly, so the re-registration failure is a
+# boot-window race, not a general hotplug defect.
+on init
+    write /proc/hps/enabled "0"
+    write /sys/devices/system/cpu/cpu0/online "1"
+    write /sys/devices/system/cpu/cpu1/online "1"
+    write /sys/devices/system/cpu/cpu2/online "1"
+    write /sys/devices/system/cpu/cpu3/online "1"
+    write /sys/devices/system/cpu/cpu4/online "1"
+    write /sys/devices/system/cpu/cpu5/online "1"
+
 # --- GPD XD+ tweaks menu dispatch (Settings > GPD XD+) -----------------------
 # The in-Settings menu sets sys.xdplus.*/persist.sys.xdplus.* props; these
 # triggers run the root-side dispatcher. See rootdir .../xdplus_tweaks.sh and
