@@ -147,6 +147,29 @@ service mediacodec /vendor/bin/hw/android.hardware.media.omx@1.0-service
     disabled
     override
 
+# --- cpuset masks per group --------------------------------------------------
+# AOSP's system/core/rootdir/init.rc creates the cpuset groups and copies the
+# ROOT mask into every one of them, with the comment "the device's init.rc must
+# actually set the correct cpus". This device never did, so top-app, foreground,
+# background, system-background and restricted were all `0-5` and placement
+# differentiated nothing.
+#
+# Topology: cpu0-3 = A53 @1.70 GHz (little), cpu4-5 = A72 @2.11 GHz (big).
+# Background work goes to the A53s so it cannot displace foreground work on the
+# big cores; top-app and foreground keep both clusters.
+#
+# This only became meaningful once the cpuset controller gained its allow_attach
+# hook (kernel 325922b6) — before that every non-root placement failed -EACCES,
+# 803 per boot, so no mask could have had any effect.
+#
+# post-fs-data, not init: the groups are created by core init.rc under `on init`
+# and this must land after them, while still being long before ActivityManager
+# places anything.
+on post-fs-data
+    write /dev/cpuset/background/cpus 0-3
+    write /dev/cpuset/system-background/cpus 0-3
+    write /dev/cpuset/restricted/cpus 0-3
+
 # --- Early governor switch ---------------------------------------------------
 # The kernel default is already 'interactive' (CONFIG_CPU_FREQ_DEFAULT_GOV_
 # INTERACTIVE in mt8176_defconfig), but the vendor rc overwrites both clusters
