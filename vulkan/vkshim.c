@@ -19,6 +19,11 @@
 //     Property sets from an untrusted app domain only work because this port
 //     runs SELinux permissive.
 //
+// The shim cache is owned per VkDevice and torn down from the vkCreateDevice /
+// vkDestroyDevice hooks, and every pipeline-creation batch holds cache_mu for
+// its whole duration. Both are load-bearing, not tidiness — see ensure_disk_cache
+// and cache_mu.
+//
 // A "fresh-device warm-up" (sacrificial render passes at vkCreateDevice, plus
 // hooks on vkCreateSwapchainKHR / vkAcquireImageANDROID / native-buffer
 // vkCreateImage / vkDestroyDevice) lived here until 2026-07-20 and was removed:
@@ -63,9 +68,18 @@ static PFN_vkCreateComputePipelines real_ccp;
 static PFN_vkCreatePipelineCache real_cpc;
 static PFN_vkMergePipelineCaches real_mpc;
 static PFN_vkGetPipelineCacheData real_gpcd;
+static PFN_vkDestroyPipelineCache real_dpc;
+static PFN_vkDestroyDevice real_dd;
+static PFN_vkCreateDevice real_cd;
 
 // ---- persistent pipeline cache --------------------------------------------
 
+// cache_mu covers disk_cache and everything derived from it, and is held across
+// the whole pipeline-creation batch — not just the bookkeeping around it.
+// vkCreateGraphicsPipelines/vkCreateComputePipelines/vkMergePipelineCaches/
+// vkGetPipelineCacheData all take pipelineCache as an externally-synchronised
+// parameter, and once the shim substitutes one cache for every caller, two app
+// threads compiling at once are two threads mutating one cache object.
 static pthread_mutex_t cache_mu = PTHREAD_MUTEX_INITIALIZER;
 static VkDevice cache_dev;
 static VkPipelineCache disk_cache;
@@ -92,11 +106,19 @@ static void resolve_cache_fns(VkDevice dev) {
 	if (!real_cpc) real_cpc = (PFN_vkCreatePipelineCache)real_gdpa(dev, "vkCreatePipelineCache");
 	if (!real_mpc) real_mpc = (PFN_vkMergePipelineCaches)real_gdpa(dev, "vkMergePipelineCaches");
 	if (!real_gpcd) real_gpcd = (PFN_vkGetPipelineCacheData)real_gdpa(dev, "vkGetPipelineCacheData");
+	if (!real_dpc) real_dpc = (PFN_vkDestroyPipelineCache)real_gdpa(dev, "vkDestroyPipelineCache");
 }
 
 // Called with cache_mu held. Creates the shim cache for this device, primed
 // from the on-disk blob if one exists (the driver validates the header UUID
 // itself and falls back to empty on mismatch).
+//
+// The device is tracked by the vkCreateDevice/vkDestroyDevice hooks below, NOT
+// by comparing handles here: the blob hands out the same VkDevice address again
+// after a destroy/recreate, so a handle compare cannot tell "same device" from
+// "new device at the old address" and would keep a cache belonging to the dead
+// one. That is exactly what killed RetroArch on a renderer restart —
+// vkMergePipelineCaches dereferenced the freed cache object.
 static VkPipelineCache ensure_disk_cache(VkDevice dev) {
 	if (cache_dev == dev && disk_cache != VK_NULL_HANDLE) return disk_cache;
 	resolve_cache_fns(dev);
@@ -226,13 +248,11 @@ static VkResult compile_batch(void *(*fn)(void *), void *args, VkResult *slot,
 	VkPipelineCache app_cache = *cache_slot;
 	if (app_cache == VK_NULL_HANDLE && shim_cache != VK_NULL_HANDLE)
 		*cache_slot = shim_cache;
-	pthread_mutex_unlock(&cache_mu);
 
 	unsigned long long t0 = now_ns();
 	VkResult r = run_big_stack(fn, args, slot);
 	unsigned long long dt = now_ns() - t0;
 
-	pthread_mutex_lock(&cache_mu);
 	compiled_count += n;
 	if (dt > SLOW_NS) slow_session = 1;
 	if (slow_session) publish_progress();
@@ -261,6 +281,46 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 	return compile_batch(cp_thread, &a, &a.r, dev, &a.cache, n);
 }
 
+// ---- device lifetime -------------------------------------------------------
+
+// Called with cache_mu held. `dev` is the device the cache belongs to, or NULL
+// when it is already dead and the handle must not be touched again.
+static void drop_disk_cache(VkDevice dev) {
+	if (disk_cache != VK_NULL_HANDLE && dev) {
+		save_disk_cache(dev);
+		if (real_dpc) real_dpc(dev, disk_cache, NULL);
+	}
+	disk_cache = VK_NULL_HANDLE;
+	cache_dev = NULL;
+	last_saved_size = 0;
+	cache_path[0] = '\0';
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_DestroyDevice(
+	VkDevice dev, const VkAllocationCallbacks *ac) {
+	pthread_mutex_lock(&cache_mu);
+	if (cache_dev == dev) drop_disk_cache(dev);
+	pthread_mutex_unlock(&cache_mu);
+	real_dd(dev, ac);
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateDevice(
+	VkPhysicalDevice pd, const VkDeviceCreateInfo *ci,
+	const VkAllocationCallbacks *ac, VkDevice *out) {
+	VkResult r = real_cd(pd, ci, ac, out);
+	if (r != VK_SUCCESS) return r;
+	// Belt and braces for a destroy we never saw: the old cache cannot be
+	// destroyed (its device may or may not still exist, and the handle may
+	// already be dangling), so drop the reference without touching it.
+	pthread_mutex_lock(&cache_mu);
+	if (disk_cache != VK_NULL_HANDLE) {
+		LOGE("device created with a live cache from %p — dropping it unfreed", cache_dev);
+		drop_disk_cache(NULL);
+	}
+	pthread_mutex_unlock(&cache_mu);
+	return r;
+}
+
 // ---- proc-addr interposition ----------------------------------------------
 
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
@@ -272,6 +332,10 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
 	if (!strcmp(name, "vkCreateComputePipelines")) {
 		if (!real_ccp) real_ccp = (PFN_vkCreateComputePipelines)real_gdpa(dev, name);
 		return real_ccp ? (PFN_vkVoidFunction)shim_CreateComputePipelines : NULL;
+	}
+	if (!strcmp(name, "vkDestroyDevice")) {
+		if (!real_dd) real_dd = (PFN_vkDestroyDevice)real_gdpa(dev, name);
+		return real_dd ? (PFN_vkVoidFunction)shim_DestroyDevice : NULL;
 	}
 	if (!strcmp(name, "vkGetDeviceProcAddr"))
 		return (PFN_vkVoidFunction)shim_GetDeviceProcAddr;
@@ -291,6 +355,16 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetInstanceProcAddr(
 	if (!strcmp(name, "vkCreateComputePipelines")) {
 		if (!real_ccp) real_ccp = (PFN_vkCreateComputePipelines)real_gipa(inst, name);
 		return real_ccp ? (PFN_vkVoidFunction)shim_CreateComputePipelines : NULL;
+	}
+	// Device lifetime: the loader takes vkCreateDevice from the instance and
+	// vkDestroyDevice from the device, so both tables need a hook.
+	if (!strcmp(name, "vkCreateDevice")) {
+		if (!real_cd) real_cd = (PFN_vkCreateDevice)real_gipa(inst, name);
+		return real_cd ? (PFN_vkVoidFunction)shim_CreateDevice : NULL;
+	}
+	if (!strcmp(name, "vkDestroyDevice")) {
+		if (!real_dd) real_dd = (PFN_vkDestroyDevice)real_gipa(inst, name);
+		return real_dd ? (PFN_vkVoidFunction)shim_DestroyDevice : NULL;
 	}
 	return real_gipa(inst, name);
 }
