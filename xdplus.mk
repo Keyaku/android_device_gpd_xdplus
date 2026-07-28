@@ -116,7 +116,7 @@ PRODUCT_PACKAGES += healthd
 # never coexists with the charger-mode healthd above.
 PRODUCT_PACKAGES += android.hardware.health@2.1-service.xdplus
 
-# LAN OTA trust anchor (docs/OTA_HOSTING.md "Option A"). The Updater talks HTTPS
+# LAN OTA trust anchor. The Updater talks HTTPS
 # to the LAN box (ota.example.com:1443); its server cert is issued by our own CA
 # (scripts/ota_ca_setup.sh). Bake the CA's PUBLIC cert into the system trust
 # store so the device validates that TLS with no cleartext exception. Wildcard =

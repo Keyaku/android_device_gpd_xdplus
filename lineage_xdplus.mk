@@ -38,7 +38,7 @@ PRODUCT_BUILD_PROP_OVERRIDES += \
 # so ro.build.tags flips test-keys -> release-keys and the "signed with public
 # keys" warning goes away (Play Protect / platform-signature based). OTA public
 # key = releasekey so the Updater's RecoverySystem.verifyPackage accepts our
-# self-signed OTA zips (see docs/OTA_HOSTING.md).
+# self-signed OTA zips.
 # NOTE: BUILD_FINGERPRINT above intentionally keeps its ".../test-keys" text — it
 # is matched to the ALLDOCUBE 8.1 vendor base for DRM/Widevine provisioning and is
 # a separate prop from ro.build.tags; do not flip it or L3 provisioning may break.
