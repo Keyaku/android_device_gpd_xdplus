@@ -71,6 +71,8 @@ static PFN_vkGetPipelineCacheData real_gpcd;
 static PFN_vkDestroyPipelineCache real_dpc;
 static PFN_vkDestroyDevice real_dd;
 static PFN_vkCreateDevice real_cd;
+static PFN_vkCmdBlitImage real_cbi;
+static PFN_vkCreateSampler real_cs;
 
 // ---- persistent pipeline cache --------------------------------------------
 
@@ -281,6 +283,94 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 	return compile_batch(cp_thread, &a, &a.r, dev, &a.cache, n);
 }
 
+// ---- broken vkCmdBlitImage, and the mip chains built on it -----------------
+
+// This blob's vkCmdBlitImage is broken for anything that resizes, in a
+// different way per filter. tools/vkmip fills level 0 with a blue top-left
+// quadrant on a red field, generates a chain, and reads levels back:
+//
+//   VK_FILTER_LINEAR   the requested levels stay empty and the *base* level
+//                      comes back holding the downscaled result — the blit
+//                      scales correctly but ignores dstSubresource.mipLevel,
+//                      so it overwrites the image it was reading from
+//   VK_FILTER_NEAREST  the requested level is written, but with the source
+//                      texels copied 1:1 — the scale factor is ignored
+//
+// No error in either case, and the format advertises BLIT_SRC and BLIT_DST. So
+// a blit is trustworthy only when source and destination extents are equal, and
+// then only with NEAREST.
+//
+// Consequence: no mipmap chain generated the standard way (blit level n-1 into
+// level n) is usable here, and generating one with LINEAR actively destroys the
+// texture. That is the RetroArch glui menu: its icons are loaded mipmapped, so
+// the sampler read levels that were never written (icons invisible), and once
+// they were made to draw, level 0 itself carried a half-size copy of the icon
+// left behind by the chain (each icon drawn twice, one small, one full size).
+//
+// So: never hand the driver a scaling blit, and never sample above level 0.
+// Both are toggleable:
+//  - debug.xdplus.vkblitnearest=0 stops the 1:1 filter downgrade.
+//  - debug.xdplus.vkmiplod=0 stops clamping samplers to level 0.
+//  - debug.xdplus.vkblitskip=0 lets scaling blits through to the driver.
+static int blit_downgrade = -1;
+static int miplod_clamp = -1;
+static int blit_skip = -1;
+static int warned_scaling_blit;
+
+static int prop_on(const char *name, int *cache) {
+	if (*cache < 0) {
+		char v[PROP_VALUE_MAX] = {0};
+		__system_property_get(name, v);
+		*cache = v[0] == '0' ? 0 : 1;
+	}
+	return *cache;
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_CmdBlitImage(
+	VkCommandBuffer cb, VkImage src, VkImageLayout src_layout,
+	VkImage dst, VkImageLayout dst_layout, uint32_t n,
+	const VkImageBlit *regions, VkFilter filter) {
+	int scales = 0;
+	for (uint32_t i = 0; i < n; i++) {
+		const VkOffset3D *s = regions[i].srcOffsets, *d = regions[i].dstOffsets;
+		if (s[1].x - s[0].x != d[1].x - d[0].x ||
+			s[1].y - s[0].y != d[1].y - d[0].y ||
+			s[1].z - s[0].z != d[1].z - d[0].z) { scales = 1; break; }
+	}
+	if (scales && prop_on("debug.xdplus.vkblitskip", &blit_skip)) {
+		// Dropping it leaves the destination level unwritten, which the sampler
+		// clamp below makes harmless. Letting it through under LINEAR would
+		// corrupt the source image instead — strictly worse than doing nothing.
+		if (!warned_scaling_blit) {
+			warned_scaling_blit = 1;
+			LOGE("dropping scaling vkCmdBlitImage: this driver writes it to the wrong mip level");
+		}
+		return;
+	}
+	// A 1:1 blit is correct under NEAREST and does nothing under LINEAR, so
+	// the downgrade is a straight win.
+	if (!scales && filter == VK_FILTER_LINEAR &&
+		prop_on("debug.xdplus.vkblitnearest", &blit_downgrade))
+		filter = VK_FILTER_NEAREST;
+	real_cbi(cb, src, src_layout, dst, dst_layout, n, regions, filter);
+}
+
+// Since no generated mip chain can be trusted, keep samplers on level 0. The
+// cost is point-sampled minification instead of a mip pyramid; the alternative
+// is sampling levels that hold a magnified corner of the image, or nothing.
+static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateSampler(
+	VkDevice dev, const VkSamplerCreateInfo *ci,
+	const VkAllocationCallbacks *ac, VkSampler *out) {
+	if (ci && ci->maxLod > 0.0f && prop_on("debug.xdplus.vkmiplod", &miplod_clamp)) {
+		VkSamplerCreateInfo fixed = *ci;
+		fixed.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+		fixed.minLod = 0.0f;
+		fixed.maxLod = 0.0f;
+		return real_cs(dev, &fixed, ac, out);
+	}
+	return real_cs(dev, ci, ac, out);
+}
+
 // ---- device lifetime -------------------------------------------------------
 
 // Called with cache_mu held. `dev` is the device the cache belongs to, or NULL
@@ -336,6 +426,14 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
 	if (!strcmp(name, "vkDestroyDevice")) {
 		if (!real_dd) real_dd = (PFN_vkDestroyDevice)real_gdpa(dev, name);
 		return real_dd ? (PFN_vkVoidFunction)shim_DestroyDevice : NULL;
+	}
+	if (!strcmp(name, "vkCmdBlitImage")) {
+		if (!real_cbi) real_cbi = (PFN_vkCmdBlitImage)real_gdpa(dev, name);
+		return real_cbi ? (PFN_vkVoidFunction)shim_CmdBlitImage : NULL;
+	}
+	if (!strcmp(name, "vkCreateSampler")) {
+		if (!real_cs) real_cs = (PFN_vkCreateSampler)real_gdpa(dev, name);
+		return real_cs ? (PFN_vkVoidFunction)shim_CreateSampler : NULL;
 	}
 	if (!strcmp(name, "vkGetDeviceProcAddr"))
 		return (PFN_vkVoidFunction)shim_GetDeviceProcAddr;
