@@ -147,16 +147,43 @@ service mediacodec /vendor/bin/hw/android.hardware.media.omx@1.0-service
     disabled
     override
 
+# --- Early governor switch ---------------------------------------------------
+# The kernel default is already 'interactive' (CONFIG_CPU_FREQ_DEFAULT_GOV_
+# INTERACTIVE in mt8176_defconfig), but the vendor rc overwrites both clusters
+# with 'ondemand' inside its own `on boot` block ("swap to ondemand governor (as
+# it works better)"). That covers the whole heavy phase — zygote preload, PMS,
+# system_server — during which ondemand's go_hispeed_load=99 will not ramp until
+# the CPU is nearly saturated. Nothing in /vendor writes scaling_governor from
+# native code (checked: no blob references the node), so the vendor rc is the
+# only writer to beat, and beating it is purely an ordering problem.
+#
+# Ordering: actions sharing a trigger run in parse order and the system rc is
+# parsed BEFORE the vendor rc, so our own `on boot` block would lose. Setting a
+# property instead queues its trigger after everything already queued for `on
+# boot`, including the vendor write — deterministic, no timing guess. The
+# boot_completed write below stays as-is: it is the backstop if anything else
+# takes the node later in boot, and it re-applies the tunables regardless.
+on boot
+    setprop sys.xdplus.gov ready
+
+on property:sys.xdplus.gov=ready
+    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor interactive
+    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_governor interactive
+    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/go_hispeed_load 85
+    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/target_loads 80
+    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/min_sample_time 40000
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/go_hispeed_load 85
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/target_loads 80
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/min_sample_time 40000
+
 on property:sys.boot_completed=1
     stop configstore-hal-1-0
     # vendor omx service is unlinkable (O-era ABI); system omx-hal-system replaces it
     stop mediacodec
-    # MT8173 boots on the kernel-default 'ondemand' governor: no input boost and
-    # go_hispeed_load=99 (won't ramp until ~saturated) => the felt input latency.
-    # Switch both clusters to interactive and lower the ramp thresholds. Done at
-    # boot_completed so it lands after the MTK power HAL, which would otherwise
-    # clobber an earlier write. Tunable nodes only exist once interactive is set,
-    # so set the governor first, then the tunables, in order.
+    # Re-apply the interactive switch (see the early block above). Kept because
+    # this is the point past which nothing else writes the node, and because the
+    # tunable nodes only exist once the governor is set — so governor first,
+    # then tunables, in order.
     write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor interactive
     write /sys/devices/system/cpu/cpu4/cpufreq/scaling_governor interactive
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/go_hispeed_load 85
