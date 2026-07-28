@@ -48,7 +48,7 @@ index 20b6b468..d78388ef 100644
  
      private final ActivityTaskManagerService mService;
 -    private final RootWindowContainer mRootWindowContainer;
-+    // GPD XD+ (§106): NOT final. This used to be captured once in the constructor
++    // GPD XD+: NOT final. This used to be captured once in the constructor
 +    // from service.mRootWindowContainer, which is still null while
 +    // ActivityTaskManagerService is being wired up. A starter constructed in that
 +    // window kept a null reference forever and NPE'd in execute(), taking
@@ -63,7 +63,7 @@ index 20b6b468..d78388ef 100644
                  throw new IllegalArgumentException("File descriptors passed in Intent");
              }
  
-+            // GPD XD+ (§106): late-bind the root window container. It is null if this
++            // GPD XD+: late-bind the root window container. It is null if this
 +            // starter was constructed before ActivityTaskManagerService finished
 +            // wiring up; by the time a request is actually executed it is normally
 +            // set, so pick it up here rather than NPE'ing below on a stale null.

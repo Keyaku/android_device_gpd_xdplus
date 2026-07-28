@@ -42,7 +42,7 @@ index 878761b077..dcb2b27117 100644
  
      mPendingHotplugEvents.clear();
 +
-+    // GPD XD+ (§102): re-arm the primary display's HWC vsync after any hotplug.
++    // GPD XD+: re-arm the primary display's HWC vsync after any hotplug.
 +    //
 +    // setPrimaryVsyncEnabledInternal() stores mHWCVsyncPendingState but only
 +    // pushes it to HWC when the internal display exists and is powered on, and
