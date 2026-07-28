@@ -4,7 +4,7 @@
 # raises the res_hdmi switch that triggers the blob's external display bringup;
 # this tool issues the missing ioctls on /dev/hdmitx. It used to be a static
 # host-cross build staged in /data/local/tmp, which meant HDMI bringup silently
-# depended on a hand-pushed artifact (PORTING_LOG §69). Build it with the
+# depended on a hand-pushed artifact. Build it with the
 # platform instead so xdplus_tweaks.sh can rely on it existing.
 
 LOCAL_PATH := $(call my-dir)

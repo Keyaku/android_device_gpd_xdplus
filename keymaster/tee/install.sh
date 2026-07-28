@@ -6,7 +6,7 @@
 # 1. libtz_uree.so — the TEE client that the trustlet HAL keystore.mt8173.so
 #    NEEDs (imports UREE_CreateSession/UREE_TeeServiceCall/...). It was missing
 #    from the prebuilt 8.1 vendor, which is why keymaster fell back to software.
-#    Restoring it makes the MT8173 secure world reachable (TEE spike, §29).
+#    Restoring it makes the MT8173 secure world reachable (TEE spike).
 #
 # 2. /vendor/manifest.xml keymaster@3.0 transport: passthrough -> hwbinder.
 #    The passthrough decl makes clients dlopen the vendor

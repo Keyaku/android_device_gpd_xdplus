@@ -24,7 +24,7 @@
 // vkCreateImage / vkDestroyDevice) lived here until 2026-07-20 and was removed:
 // the defect it targeted was an artifact of a missing barrier in the vkreinit
 // harness, and the warm-up only ever "worked" because its vkQueueWaitIdle
-// serialised the queue (§76-§77). Do not reintroduce it without a repro from a
+// serialised the queue. Do not reintroduce it without a repro from a
 // correctly-synchronised probe.
 //
 // Install: replaces /system/lib{,64}/vulkan.mt8173.so (previously symlinks to

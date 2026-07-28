@@ -5,7 +5,7 @@
 # templates that init.connectivity.rc starts wpa_supplicant with (-c .../wpa_
 # supplicant.conf for wlan0 and -c .../p2p_supplicant.conf for p2p0). After a
 # /data wipe both are gone, so supplicant dies ("Failed to open/parse config"),
-# ISupplicant never registers, and Wi-Fi can never enable. See PORTING_LOG §33.
+# ISupplicant never registers, and Wi-Fi can never enable.
 #
 # Copy-if-missing only: the framework keeps saved networks in WifiConfigStore.xml,
 # not here, but we still never clobber an existing file so a user/runtime edit

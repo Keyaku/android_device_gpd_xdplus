@@ -23,13 +23,13 @@ static constexpr const char* gInstanceName = "default";
 //
 // Why this exists: the frozen ALLDOCUBE 8.1 vendor ships NO health HAL, so in a
 // normal boot nothing registers IHealth and BatteryService stalls ~4 s on
-// getService before falling back (PORTING_LOG §45, the single largest boot-time
+// getService before falling back (the single largest boot-time
 // item). Registering IHealth here cures that wait.
 //
 // Why it is not the stock service: AOSP's android.hardware.health@2.1-service is
 // a thin binder wrapper that dlopen()s a SEPARATE passthrough -impl .so which is
 // vendor-only ("not core"). We cannot rebuild /vendor on this legacy
-// system-as-root device (§46). So instead of the wrapper+dlopen split, we build
+// system-as-root device. So instead of the wrapper+dlopen split, we build
 // ONE binary that constructs the default Health impl directly in-process —
 // byte-for-byte the same thing the stock passthrough impl.cpp's HIDL_FETCH_IHealth
 // does (default healthd_config, the generic /sys/class/power_supply reader in

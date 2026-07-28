@@ -9,7 +9,7 @@
 # /sys/devices/system/cpu/cpu4/cpufreq/ does not exist for the rest of that boot
 # even though `online` still reads 0-5. The A72s then run unscaled at their boot
 # OPP and cpu0 sits pegged at 1703 MHz carrying the whole machine alone — that is
-# the entire 24-40 s "identical image boots at different speeds" spread (§124).
+# the entire 24-40 s "identical image boots at different speeds" spread.
 #
 # `on init` is the earliest trigger that runs after the kernel's procfs exists
 # (hps registers its proc entries from a device_initcall, well before init), and
@@ -32,8 +32,8 @@ on init
 
 # --- GPD XD+ tweaks menu dispatch (Settings > GPD XD+) -----------------------
 # The in-Settings menu sets sys.xdplus.*/persist.sys.xdplus.* props; these
-# triggers run the root-side dispatcher. See rootdir .../xdplus_tweaks.sh and
-# PORTING_LOG (mini-HDMI out). SELinux is permissive on this port, so no extra
+# triggers run the root-side dispatcher. See rootdir .../xdplus_tweaks.sh.
+# SELinux is permissive on this port, so no extra
 # property/domain rules are needed.
 service xdplus-tweaks /system/bin/sh /system/etc/xdplus_tweaks.sh ${sys.xdplus.action}
     class main
@@ -88,7 +88,7 @@ on property:sys.boot_completed=1
 # Seed /data/misc/wifi/{wpa,p2p}_supplicant.conf on a fresh /data. This port's
 # init only creates the dir; nothing recreates the templates wpa_supplicant is
 # launched with, so a factory reset otherwise leaves Wi-Fi permanently unable to
-# start supplicant (PORTING_LOG §33). Copy-if-missing, root, once, at post-fs-data.
+# start supplicant. Copy-if-missing, root, once, at post-fs-data.
 service xdplus-wifiseed /system/bin/sh /system/etc/xdplus_wifi_seed.sh
     class main
     user root
@@ -100,7 +100,7 @@ on post-fs-data
     start xdplus-wifiseed
 
 # Driver power-save causes the AP to low-ack-kick the device under sustained
-# transfer load (PORTING_LOG §44/§49) — `iw dev wlan0 set power_save off`
+# transfer load — `iw dev wlan0 set power_save off`
 # proved necessary live. The real fix is patch 0011 (+
 # persist.sys.wifi_ps_pin_off in system.prop): the framework re-enables
 # power-save through ClientModeImpl.setPowerSave after every DHCP, so any

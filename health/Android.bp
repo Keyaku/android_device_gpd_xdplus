@@ -1,14 +1,14 @@
-// System-side, self-contained health@2.1 HAL (PORTING_LOG §45 boot-time cure).
+// System-side, self-contained health@2.1 HAL (boot-time cure).
 // The 8.1 vendor ships no health HAL; in normal boot nothing registers IHealth
 // and BatteryService stalls ~4 s on getService. This registers the default
 // health impl in-process (no vendor passthrough -impl .so — see service.cpp for
 // why the stock wrapper+dlopen split can't be used on this system-as-root
 // device). Built for core/system (no `vendor: true`), mirroring the
-// configstore/dumpstate .xdplus backup services. VINTF is unenforced here (§39)
+// configstore/dumpstate .xdplus backup services. VINTF is unenforced here
 // so registerAsService alone is enough for correctness, but the manifest
 // fragment is still declared: without it every getTransport lookup misses and
 // the caller pays the non-enforced-VINTF legacy retry, which is boot time spent
-// for nothing (§123).
+// for nothing.
 cc_binary {
 	name: "android.hardware.health@2.1-service.xdplus",
 	relative_install_path: "hw",

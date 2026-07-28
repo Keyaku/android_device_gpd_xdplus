@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  xdplus audio effects config (§52 permanent fix).
+  xdplus audio effects config (permanent fix).
 
   Purpose: make audioserver load effects from the AOSP software soundfx libs
   instead of the frozen ALLDOCUBE 8.1 vendor config
