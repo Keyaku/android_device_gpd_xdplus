@@ -47,6 +47,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <sys/system_properties.h>
 #include <android/log.h>
 
@@ -61,6 +62,25 @@
 #define SLOW_NS (2ull * 1000000000ull)
 // Floor on how often the cache is flushed to disk mid-session; see save_disk_cache.
 #define SAVE_MIN_INTERVAL_NS (30ull * 1000000000ull)
+
+// Hard ceiling on what this shim may leave on /data. The cache only ever grows
+// — a Vulkan pipeline cache blob is opaque, so there is no way to evict one
+// entry from it — and one RetroArch session took it from 53 MB to 80 MB with no
+// sign of converging. This device has ~25 GB of /data and no way to move app
+// data to the microSD, so "grows forever" is not a shipping option.
+//
+// Two limits, both in MB. Each is read from persist.sys.xdplus.<name>, which is
+// what the GPD XD+ Settings menu writes, with debug.xdplus.<name> as a
+// non-persistent override for A/B testing without touching the user's setting.
+//
+// Over the per-package limit the file is frozen at its last good size rather
+// than reset: the alternative is throwing away every compiled pipeline and
+// making the user sit through the whole USC compile again, periodically and
+// forever. Frozen keeps everything already earned and only forfeits pipelines
+// found after the cap — and on this hardware the set converges, so what is
+// forfeited is the long tail, not the common path.
+#define CACHE_MAX_MB 64u
+#define CACHE_DIR_MAX_MB 192u
 
 static hwvulkan_module_t *real_module;
 static PFN_vkGetInstanceProcAddr real_gipa;
@@ -90,6 +110,7 @@ static VkPipelineCache disk_cache;
 static char cache_path[192];
 static size_t last_saved_size;
 static unsigned long long last_save_ns;
+static int cache_frozen;
 static unsigned compiled_count;
 static int slow_session;
 
@@ -111,6 +132,59 @@ static const char *pkg_name(void) {
 		if (c) *c = '\0';
 	}
 	return pkg;
+}
+
+static size_t cap_bytes(const char *name, unsigned def_mb) {
+	char v[PROP_VALUE_MAX] = {0};
+	char prop[96];
+	snprintf(prop, sizeof(prop), "debug.xdplus.%s", name);
+	__system_property_get(prop, v);
+	if (!v[0]) {
+		snprintf(prop, sizeof(prop), "persist.sys.xdplus.%s", name);
+		__system_property_get(prop, v);
+	}
+	unsigned mb = v[0] ? (unsigned)strtoul(v, NULL, 10) : def_mb;
+	if (!mb) mb = def_mb;   // unset, unparseable or 0 all mean "use the default"
+	return (size_t)mb * 1024u * 1024u;
+}
+
+// Keep the whole cache directory under budget by deleting the least recently
+// modified caches of *other* packages. Ours is never a candidate — evicting the
+// cache we are about to use would just make this run recompile everything.
+//
+// The directory is mode 0777 (init.xdplus.rc creates it that way so any app can
+// write its own cache), so any client can unlink any entry here. That is what
+// makes this possible and is worth knowing before anything sensitive is ever
+// put in this directory.
+static void prune_cache_dir(const char *keep) {
+	size_t budget = cap_bytes("vkcachedirmax", CACHE_DIR_MAX_MB);
+	for (;;) {
+		DIR *d = opendir(CACHE_DIR);
+		if (!d) return;
+		size_t total = 0;
+		char oldest[sizeof(cache_path)] = {0};
+		time_t oldest_mtime = 0;
+		struct dirent *e;
+		while ((e = readdir(d))) {
+			char path[sizeof(cache_path)];
+			struct stat st;
+			if (e->d_name[0] == '.') continue;
+			if ((size_t)snprintf(path, sizeof(path), CACHE_DIR "/%s", e->d_name) >= sizeof(path))
+				continue;
+			if (stat(path, &st) || !S_ISREG(st.st_mode)) continue;
+			total += (size_t)st.st_size;
+			if (keep && !strcmp(path, keep)) continue;
+			if (!oldest[0] || st.st_mtime < oldest_mtime) {
+				oldest_mtime = st.st_mtime;
+				snprintf(oldest, sizeof(oldest), "%s", path);
+			}
+		}
+		closedir(d);
+		if (total <= budget || !oldest[0]) return;
+		if (unlink(oldest))
+			return;  // cannot evict any further, leave it alone
+		LOGI("cache dir over budget (%zu > %zu), evicted %s", total, budget, oldest);
+	}
 }
 
 static void resolve_cache_fns(VkDevice dev) {
@@ -136,6 +210,8 @@ static VkPipelineCache ensure_disk_cache(VkDevice dev) {
 	if (!real_cpc || !real_gpcd) return VK_NULL_HANDLE;
 
 	snprintf(cache_path, sizeof(cache_path), CACHE_DIR "/%s.pcache", pkg_name());
+	prune_cache_dir(cache_path);
+	cache_frozen = 0;
 	void *initial = NULL;
 	size_t initial_size = 0;
 	int fd = open(cache_path, O_RDONLY);
@@ -190,6 +266,17 @@ static void save_disk_cache(VkDevice dev, int force) {
 	size_t size = 0;
 	if (real_gpcd(dev, disk_cache, &size, NULL) != VK_SUCCESS || size == 0) return;
 	if (size == last_saved_size) return;
+	// Size query first, cap second, serialise last — the check costs nothing
+	// and skips a multi-megabyte malloc and write when it fails.
+	size_t cap = cap_bytes("vkcachemax", CACHE_MAX_MB);
+	if (size > cap) {
+		if (!cache_frozen) {
+			cache_frozen = 1;
+			LOGI("pipeline cache frozen at %zu bytes on disk: next write would be %zu, cap is %zu",
+				last_saved_size, size, cap);
+		}
+		return;
+	}
 	last_save_ns = now;
 	void *data = malloc(size);
 	if (!data) return;
@@ -401,6 +488,7 @@ static void drop_disk_cache(VkDevice dev) {
 	cache_dev = NULL;
 	last_saved_size = 0;
 	last_save_ns = 0;
+	cache_frozen = 0;
 	cache_path[0] = '\0';
 }
 
