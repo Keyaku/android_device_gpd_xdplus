@@ -175,7 +175,7 @@ index 19b2d54..5207e1b 100644
      bool legacyGraceUsed = kEnforceVintfManifest || !retry;
 +    // Set when the grace period starts, so a rescued lookup can report how long
 +    // the server actually needed. That number is the evidence for how short the
-+    // grace timeout can safely be made -- see todo/boot-time-stub-hals.md.
++    // grace timeout can safely be made.
 +    int64_t graceStartMs = 0;
 +    // How long the grace period is allowed to last. Measured, not guessed: across
 +    // settled boots exactly one lookup on this device is ever rescued by the
