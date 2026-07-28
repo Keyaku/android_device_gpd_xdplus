@@ -6,7 +6,9 @@
 # Usage: xdplus_tweaks.sh <command>
 #   hdmi_up      mini-HDMI DECOUPLE_MIRROR bringup
 #   hdmi_down    tear HDMI down, return to built-in panel only
-#   boot         re-apply persisted toggles at boot_completed (currently a no-op)
+#   boot         re-apply persisted toggles at boot_completed, prune the cache dir
+#   vkcache_prune  hold /data/vkshim under its total budget (root-only work)
+#   vkcache_clear  delete every shader cache (root-only work)
 
 H=/d/hdmi
 # hdmictl now ships in the image (device/gpd/xdplus/hdmi); the /data copy is only
@@ -151,6 +153,44 @@ vknotify() {
 		--es pkg "$PKG" --es count "$CNT" --es mode "$MODE" >/dev/null 2>&1
 }
 
+# /data/vkshim is sticky (see init.xdplus.rc), so an app can only unlink its own
+# cache and the Settings menu — running as system, not root — cannot unlink
+# anyone's. Enforcing the whole-directory budget is therefore root's job. The
+# per-app cap still lives in the shim, which only ever touches its own file.
+#
+# Oldest first, because a cache that has not been written in a long time belongs
+# to something the user has not played in a long time.
+vkcache_prune() {
+	DIR=/data/vkshim
+	[ -d "$DIR" ] || return 0
+	MB="$(getprop persist.sys.xdplus.vkcachedirmax)"
+	case "$MB" in ''|*[!0-9]*) MB=192 ;; esac
+	[ "$MB" -eq 0 ] && MB=192
+	BUDGET=$((MB * 1024 * 1024))
+
+	TOTAL=0
+	for f in "$DIR"/*.pcache; do
+		[ -f "$f" ] || continue
+		TOTAL=$((TOTAL + $(stat -c %s "$f" 2>/dev/null || echo 0)))
+	done
+	[ "$TOTAL" -le "$BUDGET" ] && return 0
+
+	for f in $(ls -rt "$DIR"/*.pcache 2>/dev/null); do
+		[ "$TOTAL" -le "$BUDGET" ] && break
+		SZ=$(stat -c %s "$f" 2>/dev/null) || continue
+		rm -f "$f" || continue
+		TOTAL=$((TOTAL - SZ))
+		xlog "cache dir over ${MB}MB budget, evicted $f ($SZ bytes)"
+	done
+}
+
+# An app keeps its own cache alive until it exits, so this takes effect on the
+# next launch of anything currently running.
+vkcache_clear() {
+	rm -f /data/vkshim/*.pcache
+	xlog "shader caches cleared"
+}
+
 CMD="$1"
 
 # Guard: the SurfaceFlinger-poking paths must never run before the framework is
@@ -165,10 +205,13 @@ fi
 case "$CMD" in
 	hdmi_up)   hdmi_up ;;
 	hdmi_down) hdmi_down ;;
-	# Boot path: nothing to re-apply since the un-freeze toggle was removed
-	# (is_skip_validate was KNOWN-BAD: it unfreezes nothing and makes any
-	# freeze sticky across reboots). Kept as a hook for future persisted toggles.
-	boot)      : ;;
+	# Boot path: the un-freeze toggle was removed (is_skip_validate was
+	# KNOWN-BAD: it unfreezes nothing and makes any freeze sticky across
+	# reboots), so the only work here is holding the shader-cache directory
+	# under budget — the one place that can, now that the directory is sticky.
+	boot)      vkcache_prune ;;
+	vkcache_prune) vkcache_prune ;;
+	vkcache_clear) vkcache_clear ;;
 	# Compile-progress relay: exits quietly, and must NOT clear sys.xdplus.action
 	# (it never set it).
 	vknotify)  vknotify; exit 0 ;;

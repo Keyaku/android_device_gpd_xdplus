@@ -52,6 +52,9 @@ on property:sys.xdplus.action=hdmi_up
 on property:sys.xdplus.action=hdmi_down
     start xdplus-tweaks
 
+on property:sys.xdplus.action=vkcache_clear
+    start xdplus-tweaks
+
 # --- Vulkan shader-compile progress relay ------------------------------------
 # vkshim (system/lib{,64}/vulkan.mt8173.so) publishes "<pkg>:<count>" on
 # sys.xdplus.vkcompile while a slow pipeline compile runs; relay each update to
@@ -68,11 +71,22 @@ service xdplus-vknotify /system/bin/sh /system/etc/xdplus_tweaks.sh vknotify
 on property:sys.xdplus.vkcompile=*
     start xdplus-vknotify
 
-# vkshim's persistent pipeline-cache store. World-writable on purpose: the shim
-# runs inside arbitrary (untrusted) app processes and each writes its own
+# vkshim's persistent pipeline-cache store. Writable by anyone on purpose: the
+# shim runs inside arbitrary (untrusted) app processes and each writes its own
 # <pkg>.pcache here.
+#
+# Sticky, so an app can create and replace its own cache but cannot unlink
+# anyone else's — without it, any app on the device could delete or truncate
+# every other app's shader cache, and SELinux is permissive here so the mode is
+# the only thing standing in the way. Each cache file lands 0600 through the
+# app's own umask, so they are not readable across apps either.
+#
+# The per-app size cap is enforced in-process by the shim; the whole-directory
+# budget cannot be (an app can no longer evict its neighbours), so root does it
+# below at boot and on demand.
 on post-fs-data
-    mkdir /data/vkshim 0777 root root
+    mkdir /data/vkshim 01777 root root
+    chmod 01777 /data/vkshim
 
 # Re-apply persisted toggles once the framework is up.
 service xdplus-tweaks-boot /system/bin/sh /system/etc/xdplus_tweaks.sh boot
