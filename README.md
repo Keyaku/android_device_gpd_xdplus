@@ -37,3 +37,9 @@ brunch xdplus        # → flashable zip
 Out-of-tree AOSP/framework fixes this port needs live as numbered patches in `patches/` — apply them from the repo root before `brunch` (see `patches/README.md`).
 
 Install is via TWRP (locked bootloader, no `fastboot flash`). Vendor blobs are partition-based; the vendor-writing distributable is produced by `inject_vendor.sh`.
+
+## Proprietary blobs
+
+The blob set and its authoritative file list live in the **vendor** repo, `vendor/gpd/xdplus` — not here. That tree holds the blobs themselves plus the ownership, modes, file capabilities and SELinux labels git cannot store, and bakes them into the vendor image.
+
+This device has no `extract-files.sh` / `setup-makefiles.sh`, so there is deliberately no `proprietary-files.txt` in this repo: a second copy would only drift out of step with the one the image is actually built from.
