@@ -97,6 +97,7 @@ static PFN_vkDestroyDevice real_dd;
 static PFN_vkCreateDevice real_cd;
 static PFN_vkCmdBlitImage real_cbi;
 static PFN_vkCreateSampler real_cs;
+static PFN_vkCmdBeginRenderPass real_cbrp;
 
 // ---- persistent pipeline cache --------------------------------------------
 
@@ -511,6 +512,42 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateSampler(
 	return real_cs(dev, ci, ac, out);
 }
 
+// The driver dereferences VkRenderPassBeginInfo::framebuffer without checking
+// it. Disassembly of the blob: IMG_vkCmdBeginRenderPass (zeus/core/
+// framebuffer_state.c, entry +0x1f094) loads renderPass and framebuffer with
+// one `ldp x10, x20, [x22, #0x10]`, then at +0x1f1e8 does
+// `ldrb w10, [x21, #0x80]!` where x21 = framebuffer + idx*0x38. A null handle
+// therefore faults at address 0x80 and kills the process. The only guards on
+// that path are on the pNext chain and the attachment count; the handle itself
+// is never tested, so VK_NULL_HANDLE is a SIGSEGV rather than a validation
+// error. Observed from PPSSPP's PerformBindFramebufferAsRenderTarget at 3x
+// internal resolution, alongside "GPU KICKSYNC command buffer usage high".
+//
+// Dropping the call leaves the render pass unstarted: that frame renders
+// wrong, which is strictly better than losing the process, and the log line
+// names the caller so the real bug (whoever passes a null framebuffer, most
+// likely an unchecked vkCreateFramebuffer failure) stays diagnosable.
+// debug.xdplus.vkrpguard=0 restores the blob's behaviour for A/B.
+static int rp_guard = -1;
+static unsigned null_fb_hits;
+
+static VKAPI_ATTR void VKAPI_CALL shim_CmdBeginRenderPass(
+	VkCommandBuffer cb, const VkRenderPassBeginInfo *rp,
+	VkSubpassContents contents) {
+	if (rp && rp->framebuffer == VK_NULL_HANDLE &&
+		prop_on("debug.xdplus.vkrpguard", &rp_guard)) {
+		// Loud on the first one, then sparse: a caller that does this once
+		// usually does it every frame, and the log is the diagnostic.
+		null_fb_hits++;
+		if (null_fb_hits == 1 || null_fb_hits % 512 == 0)
+			LOGE("dropping vkCmdBeginRenderPass with NULL framebuffer "
+				 "(hit %u, renderPass %p): this driver would SIGSEGV",
+				 null_fb_hits, (void *)(uintptr_t)rp->renderPass);
+		return;
+	}
+	real_cbrp(cb, rp, contents);
+}
+
 // ---- device lifetime -------------------------------------------------------
 
 // Called with cache_mu held. `dev` is the device the cache belongs to, or NULL
@@ -585,6 +622,10 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
 	if (!strcmp(name, "vkCreateSampler")) {
 		if (!real_cs) real_cs = (PFN_vkCreateSampler)real_gdpa(dev, name);
 		return real_cs ? (PFN_vkVoidFunction)shim_CreateSampler : NULL;
+	}
+	if (!strcmp(name, "vkCmdBeginRenderPass")) {
+		if (!real_cbrp) real_cbrp = (PFN_vkCmdBeginRenderPass)real_gdpa(dev, name);
+		return real_cbrp ? (PFN_vkVoidFunction)shim_CmdBeginRenderPass : NULL;
 	}
 	if (!strcmp(name, "vkGetDeviceProcAddr"))
 		return (PFN_vkVoidFunction)shim_GetDeviceProcAddr;
