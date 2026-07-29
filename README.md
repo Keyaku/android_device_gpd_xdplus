@@ -19,7 +19,9 @@ LineageOS 18.1 (Android 11) device tree for the GPD XD+ (`xdplus`).
 
 Derived from [BlackSeraph's LineageOS 15.1 tree for the same device](https://github.com/Black-Seraph/android_device_gpd_xds) (there codenamed `xds`), forward-ported to 18.1. Credit to BlackSeraph for the original GPD XD+ bring-up.
 
-Branch: `lineage-18.1` (the only supported branch — this port targets 18.1). The `mt8176` kernel is currently a prebuilt (`BoardConfig.mk TARGET_PREBUILT_KERNEL`); a from-source 3.18 kernel is in progress.
+Branch: `lineage-18.1` (the only supported branch — this port targets 18.1). The `mt8176` kernel is **built from source in-tree** by `mka bacon` — `TARGET_KERNEL_SOURCE := kernel/gpd/mt8176`, `mt8176_defconfig`, GCC 4.9 arm64.
+
+⚠️ `TARGET_KERNEL_ADDITIONAL_CONFIG := xdplus_kernel.frag` is **mandatory, not an optimisation**. Without the fragment the PowerVR driver builds at DDK 1.7 against this device's 1.9 vendor blobs, and SurfaceFlinger loops on `PVRSRVConnectKM: Incompatible driver`. `kernel.mk` only *warns* about a missing fragment and then builds from `/dev/null`, so confirm `CONFIG_MTK_GPU_VERSION` is set in the generated `.config` before flashing.
 
 ## Building
 
