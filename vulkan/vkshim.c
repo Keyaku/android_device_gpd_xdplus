@@ -98,6 +98,13 @@ static PFN_vkCreateDevice real_cd;
 static PFN_vkCmdBlitImage real_cbi;
 static PFN_vkCreateSampler real_cs;
 static PFN_vkCmdBeginRenderPass real_cbrp;
+static PFN_vkCmdEndRenderPass real_cerp;
+static PFN_vkCmdNextSubpass real_cns;
+static PFN_vkCmdDraw real_cdraw;
+static PFN_vkCmdDrawIndexed real_cdrawi;
+static PFN_vkCmdDrawIndirect real_cdrawind;
+static PFN_vkCmdDrawIndexedIndirect real_cdrawiind;
+static PFN_vkCmdClearAttachments real_cca;
 
 // ---- persistent pipeline cache --------------------------------------------
 
@@ -467,6 +474,36 @@ static int prop_on(const char *name, int *cache) {
 	return *cache;
 }
 
+// This blob is Vulkan 1.0.49, so it exports the promoted-extension entry points
+// only under their KHR names: IMG_vkGetPhysicalDeviceFeatures2KHR exists,
+// vkGetPhysicalDeviceFeatures2 does not. An app written against 1.1 asks for the
+// unsuffixed name, gets NULL, and — if it does not check — calls it. ARMSX2
+// (PCSX2) does exactly that: it logs "Failed to load required instance function
+// vkGetPhysicalDeviceFeatures2" for Features2/Properties2/MemoryProperties2,
+// then jumps to address 0, which its own signal handler turns into a SIGABRT.
+//
+// For a promoted extension the KHR alias is defined to be the same function
+// with the same signature, so falling back to name+"KHR" when the core lookup
+// fails is safe and is what the loader would do for a 1.1 driver. It only ever
+// runs after the core name has already failed, so it cannot shadow anything.
+//
+// ⚠️ This does not make the driver 1.1. An app that gets these pointers may
+// still rely on other 1.1 behaviour and fail later; the point is to convert an
+// immediate null-pointer call into a real capability query.
+// debug.xdplus.vkkhralias=0 disables it.
+static int khr_alias = -1;
+
+static int khr_name(const char *name, char *buf, size_t n) {
+	size_t l = strlen(name);
+	if (l + 4 >= n) return 0;
+	// Only promoted-style names end in a version digit; and never re-suffix
+	// something that is already an extension entry point.
+	if (l < 3 || name[l - 1] != '2') return 0;
+	memcpy(buf, name, l);
+	memcpy(buf + l, "KHR", 4);
+	return 1;
+}
+
 static VKAPI_ATTR void VKAPI_CALL shim_CmdBlitImage(
 	VkCommandBuffer cb, VkImage src, VkImageLayout src_layout,
 	VkImage dst, VkImageLayout dst_layout, uint32_t n,
@@ -531,6 +568,61 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateSampler(
 static int rp_guard = -1;
 static unsigned null_fb_hits;
 
+// Dropping only the vkCmdBeginRenderPass is not enough, and measuring that cost
+// one crash: with the pass suppressed the caller still issued its draws, and
+// the driver faulted deeper instead (IMG_vkCmdDraw, fault addr 0x30, four blob
+// frames down, from PerformRenderPass). A pass that never began must not
+// receive commands, so suppression has to span the whole pass — from the
+// dropped Begin to the matching End.
+//
+// The table is tiny and linear on purpose: suppression is rare, command buffers
+// in flight are few, and a miss is harmless (the command goes through, which is
+// the pre-guard behaviour). Overflow degrades to that same behaviour rather
+// than growing unboundedly.
+// ⚠️ supp_active() sits on the hot path — it runs on every draw. Suppression is
+// rare (one pass per frame, and none at all in a healthy session), so the
+// common case must not take a lock: a relaxed load of the active count exits
+// immediately when nothing is suppressed. The lock is only paid while a
+// suppressed pass is actually open. Do not "simplify" this back to an
+// unconditional lock; thousands of draws per frame each taking a mutex is a
+// measurable cost for a guard that almost never fires.
+#define SUPP_MAX 16
+static VkCommandBuffer supp_cb[SUPP_MAX];
+static pthread_mutex_t supp_mu = PTHREAD_MUTEX_INITIALIZER;
+static int supp_n;
+
+static void supp_set(VkCommandBuffer cb) {
+	pthread_mutex_lock(&supp_mu);
+	for (int i = 0; i < SUPP_MAX; i++)
+		if (!supp_cb[i]) {
+			supp_cb[i] = cb;
+			__atomic_add_fetch(&supp_n, 1, __ATOMIC_RELEASE);
+			break;
+		}
+	pthread_mutex_unlock(&supp_mu);
+}
+
+static int supp_active(VkCommandBuffer cb) {
+	if (__atomic_load_n(&supp_n, __ATOMIC_ACQUIRE) == 0) return 0;
+	int hit = 0;
+	pthread_mutex_lock(&supp_mu);
+	for (int i = 0; i < SUPP_MAX; i++)
+		if (supp_cb[i] == cb) { hit = 1; break; }
+	pthread_mutex_unlock(&supp_mu);
+	return hit;
+}
+
+static void supp_clear(VkCommandBuffer cb) {
+	pthread_mutex_lock(&supp_mu);
+	for (int i = 0; i < SUPP_MAX; i++)
+		if (supp_cb[i] == cb) {
+			supp_cb[i] = NULL;
+			__atomic_sub_fetch(&supp_n, 1, __ATOMIC_RELEASE);
+			break;
+		}
+	pthread_mutex_unlock(&supp_mu);
+}
+
 static VKAPI_ATTR void VKAPI_CALL shim_CmdBeginRenderPass(
 	VkCommandBuffer cb, const VkRenderPassBeginInfo *rp,
 	VkSubpassContents contents) {
@@ -540,12 +632,58 @@ static VKAPI_ATTR void VKAPI_CALL shim_CmdBeginRenderPass(
 		// usually does it every frame, and the log is the diagnostic.
 		null_fb_hits++;
 		if (null_fb_hits == 1 || null_fb_hits % 512 == 0)
-			LOGE("dropping vkCmdBeginRenderPass with NULL framebuffer "
+			LOGE("suppressing render pass with NULL framebuffer "
 				 "(hit %u, renderPass %p): this driver would SIGSEGV",
 				 null_fb_hits, (void *)(uintptr_t)rp->renderPass);
+		supp_set(cb);
 		return;
 	}
 	real_cbrp(cb, rp, contents);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_CmdEndRenderPass(VkCommandBuffer cb) {
+	if (supp_active(cb)) { supp_clear(cb); return; }
+	real_cerp(cb);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_CmdNextSubpass(
+	VkCommandBuffer cb, VkSubpassContents contents) {
+	if (supp_active(cb)) return;
+	real_cns(cb, contents);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_CmdDraw(
+	VkCommandBuffer cb, uint32_t vc, uint32_t ic, uint32_t fv, uint32_t fi) {
+	if (supp_active(cb)) return;
+	real_cdraw(cb, vc, ic, fv, fi);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_CmdDrawIndexed(
+	VkCommandBuffer cb, uint32_t ic, uint32_t inst, uint32_t fi,
+	int32_t vo, uint32_t firstInst) {
+	if (supp_active(cb)) return;
+	real_cdrawi(cb, ic, inst, fi, vo, firstInst);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_CmdDrawIndirect(
+	VkCommandBuffer cb, VkBuffer buf, VkDeviceSize off,
+	uint32_t count, uint32_t stride) {
+	if (supp_active(cb)) return;
+	real_cdrawind(cb, buf, off, count, stride);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_CmdDrawIndexedIndirect(
+	VkCommandBuffer cb, VkBuffer buf, VkDeviceSize off,
+	uint32_t count, uint32_t stride) {
+	if (supp_active(cb)) return;
+	real_cdrawiind(cb, buf, off, count, stride);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_CmdClearAttachments(
+	VkCommandBuffer cb, uint32_t ac, const VkClearAttachment *at,
+	uint32_t rc, const VkClearRect *rects) {
+	if (supp_active(cb)) return;
+	real_cca(cb, ac, at, rc, rects);
 }
 
 // ---- device lifetime -------------------------------------------------------
@@ -623,13 +761,50 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
 		if (!real_cs) real_cs = (PFN_vkCreateSampler)real_gdpa(dev, name);
 		return real_cs ? (PFN_vkVoidFunction)shim_CreateSampler : NULL;
 	}
+	// The whole suppressed-pass set has to be hooked together: hooking Begin
+	// alone leaves the draws to reach a driver with no pass state.
 	if (!strcmp(name, "vkCmdBeginRenderPass")) {
 		if (!real_cbrp) real_cbrp = (PFN_vkCmdBeginRenderPass)real_gdpa(dev, name);
 		return real_cbrp ? (PFN_vkVoidFunction)shim_CmdBeginRenderPass : NULL;
 	}
+	if (!strcmp(name, "vkCmdEndRenderPass")) {
+		if (!real_cerp) real_cerp = (PFN_vkCmdEndRenderPass)real_gdpa(dev, name);
+		return real_cerp ? (PFN_vkVoidFunction)shim_CmdEndRenderPass : NULL;
+	}
+	if (!strcmp(name, "vkCmdNextSubpass")) {
+		if (!real_cns) real_cns = (PFN_vkCmdNextSubpass)real_gdpa(dev, name);
+		return real_cns ? (PFN_vkVoidFunction)shim_CmdNextSubpass : NULL;
+	}
+	if (!strcmp(name, "vkCmdDraw")) {
+		if (!real_cdraw) real_cdraw = (PFN_vkCmdDraw)real_gdpa(dev, name);
+		return real_cdraw ? (PFN_vkVoidFunction)shim_CmdDraw : NULL;
+	}
+	if (!strcmp(name, "vkCmdDrawIndexed")) {
+		if (!real_cdrawi) real_cdrawi = (PFN_vkCmdDrawIndexed)real_gdpa(dev, name);
+		return real_cdrawi ? (PFN_vkVoidFunction)shim_CmdDrawIndexed : NULL;
+	}
+	if (!strcmp(name, "vkCmdDrawIndirect")) {
+		if (!real_cdrawind) real_cdrawind = (PFN_vkCmdDrawIndirect)real_gdpa(dev, name);
+		return real_cdrawind ? (PFN_vkVoidFunction)shim_CmdDrawIndirect : NULL;
+	}
+	if (!strcmp(name, "vkCmdDrawIndexedIndirect")) {
+		if (!real_cdrawiind) real_cdrawiind = (PFN_vkCmdDrawIndexedIndirect)real_gdpa(dev, name);
+		return real_cdrawiind ? (PFN_vkVoidFunction)shim_CmdDrawIndexedIndirect : NULL;
+	}
+	if (!strcmp(name, "vkCmdClearAttachments")) {
+		if (!real_cca) real_cca = (PFN_vkCmdClearAttachments)real_gdpa(dev, name);
+		return real_cca ? (PFN_vkVoidFunction)shim_CmdClearAttachments : NULL;
+	}
 	if (!strcmp(name, "vkGetDeviceProcAddr"))
 		return (PFN_vkVoidFunction)shim_GetDeviceProcAddr;
-	return real_gdpa(dev, name);
+	PFN_vkVoidFunction f = real_gdpa(dev, name);
+	if (!f && prop_on("debug.xdplus.vkkhralias", &khr_alias)) {
+		char alias[128];
+		if (khr_name(name, alias, sizeof alias) &&
+			(f = real_gdpa(dev, alias)) != NULL)
+			LOGI("aliased %s -> %s (1.0 driver, promoted extension)", name, alias);
+	}
+	return f;
 }
 
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetInstanceProcAddr(
@@ -656,7 +831,14 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetInstanceProcAddr(
 		if (!real_dd) real_dd = (PFN_vkDestroyDevice)real_gipa(inst, name);
 		return real_dd ? (PFN_vkVoidFunction)shim_DestroyDevice : NULL;
 	}
-	return real_gipa(inst, name);
+	PFN_vkVoidFunction f = real_gipa(inst, name);
+	if (!f && prop_on("debug.xdplus.vkkhralias", &khr_alias)) {
+		char alias[128];
+		if (khr_name(name, alias, sizeof alias) &&
+			(f = real_gipa(inst, alias)) != NULL)
+			LOGI("aliased %s -> %s (1.0 driver, promoted extension)", name, alias);
+	}
+	return f;
 }
 
 // ---- hwvulkan HAL module --------------------------------------------------
