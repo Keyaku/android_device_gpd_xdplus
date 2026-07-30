@@ -451,7 +451,11 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 //                      the base level is destroyed. Both filters do this when
 //                      source and destination are different images; when they
 //                      are the same image NEAREST instead writes the right
-//                      level with the scale dropped (texels copied 1:1).
+//                      level with the scale dropped (texels copied 1:1). A
+//                      *non*-scaling blit into a mip level writes nothing at
+//                      all under either filter, so a mip destination is broken
+//                      whether or not the blit resizes — which is why the test
+//                      below keys on the mip level and ignores the extents.
 //   srcSubresource.mipLevel > 0
 //                      the blit is a silent no-op — nothing is written, and it
 //                      does not fall back to reading level 0 either.
