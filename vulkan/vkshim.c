@@ -433,37 +433,56 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 
 // ---- broken vkCmdBlitImage, and the mip chains built on it -----------------
 
-// This blob's vkCmdBlitImage is broken for anything that resizes, in a
-// different way per filter. tools/vkmip fills level 0 with a blue top-left
-// quadrant on a red field, generates a chain, and reads levels back:
+// This blob's vkCmdBlitImage mishandles mip levels. It is *not* the scaling that
+// is broken, which is what the first round of probes concluded from a chain
+// built with blits: scaling and mip addressing were varied together, so the
+// blame landed on the wrong one. Measured separately with a gradient source, so
+// a 1:1 copy is distinguishable from a real resize (tools/vkmip: vkscale,
+// vkchain, vksrcmip):
 //
-//   VK_FILTER_LINEAR   the requested levels stay empty and the *base* level
-//                      comes back holding the downscaled result — the blit
-//                      scales correctly but ignores dstSubresource.mipLevel,
-//                      so it overwrites the image it was reading from
-//   VK_FILTER_NEAREST  the requested level is written, but with the source
-//                      texels copied 1:1 — the scale factor is ignored
+//   both subresources at level 0
+//                      correct, and exactly so. 2x/4x/8x down and 2x/4x up all
+//                      land within a fraction of a code of the ideal box
+//                      filter under LINEAR, and on the right texel under
+//                      NEAREST; a 1:1 blit is bit-exact under both filters.
+//   dstSubresource.mipLevel > 0
+//                      the pixels are scaled correctly and then written at
+//                      *level 0's* address. The requested level stays empty and
+//                      the base level is destroyed. Both filters do this when
+//                      source and destination are different images; when they
+//                      are the same image NEAREST instead writes the right
+//                      level with the scale dropped (texels copied 1:1).
+//   srcSubresource.mipLevel > 0
+//                      the blit is a silent no-op — nothing is written, and it
+//                      does not fall back to reading level 0 either.
 //
-// No error in either case, and the format advertises BLIT_SRC and BLIT_DST. So
-// a blit is trustworthy only when source and destination extents are equal, and
-// then only with NEAREST.
+// No error in any case, and the format advertises BLIT_SRC and BLIT_DST.
 //
-// Consequence: no mipmap chain generated the standard way (blit level n-1 into
-// level n) is usable here, and generating one with LINEAR actively destroys the
-// texture. That is the RetroArch glui menu: its icons are loaded mipmapped, so
-// the sampler read levels that were never written (icons invisible), and once
-// they were made to draw, level 0 itself carried a half-size copy of the icon
-// left behind by the chain (each icon drawn twice, one small, one full size).
+// vkCmdCopyImage, by contrast, honours mip levels correctly on both sides
+// (verified reading level 1 and writing levels 1..6). So the defect is confined
+// to the blit path, and a correct chain is buildable: scale into a level-0
+// scratch image, then vkCmdCopyImage the scratch into the real level. Done that
+// way all 7 levels of a 64x64 chain come out right with level 0 untouched.
 //
-// So: never hand the driver a scaling blit, and never sample above level 0.
-// Both are toggleable:
-//  - debug.xdplus.vkblitnearest=0 stops the 1:1 filter downgrade.
+// That is why the RetroArch glui menu misbehaved: its icons are loaded
+// mipmapped and the chain is generated with blits, so the sampler read levels
+// that were never written (icons invisible), and level 0 itself carried a
+// half-size copy left behind by the chain (each icon drawn twice, one small,
+// one full size).
+//
+// Until the scratch-and-copy emulation is implemented here, the rule is: drop
+// any blit that names a non-zero mip level on either side, and keep samplers on
+// level 0 because no chain gets generated. Level-0 blits — including scaling
+// ones — go straight through, since they are correct.
+//  - debug.xdplus.vkblitnearest=0 stops the 1:1 filter downgrade. That
+//    downgrade is now known to be unnecessary (LINEAR at level 0 is bit-exact
+//    for a 1:1 blit); it is kept only because it is harmless and documented.
 //  - debug.xdplus.vkmiplod=0 stops clamping samplers to level 0.
-//  - debug.xdplus.vkblitskip=0 lets scaling blits through to the driver.
+//  - debug.xdplus.vkblitskip=0 lets mip-level blits through to the driver.
 static int blit_downgrade = -1;
 static int miplod_clamp = -1;
 static int blit_skip = -1;
-static int warned_scaling_blit;
+static int warned_mip_blit;
 
 static int prop_on(const char *name, int *cache) {
 	if (*cache < 0) {
@@ -508,20 +527,23 @@ static VKAPI_ATTR void VKAPI_CALL shim_CmdBlitImage(
 	VkCommandBuffer cb, VkImage src, VkImageLayout src_layout,
 	VkImage dst, VkImageLayout dst_layout, uint32_t n,
 	const VkImageBlit *regions, VkFilter filter) {
-	int scales = 0;
+	int scales = 0, mips = 0;
 	for (uint32_t i = 0; i < n; i++) {
 		const VkOffset3D *s = regions[i].srcOffsets, *d = regions[i].dstOffsets;
 		if (s[1].x - s[0].x != d[1].x - d[0].x ||
 			s[1].y - s[0].y != d[1].y - d[0].y ||
-			s[1].z - s[0].z != d[1].z - d[0].z) { scales = 1; break; }
+			s[1].z - s[0].z != d[1].z - d[0].z) scales = 1;
+		if (regions[i].srcSubresource.mipLevel ||
+			regions[i].dstSubresource.mipLevel) mips = 1;
 	}
-	if (scales && prop_on("debug.xdplus.vkblitskip", &blit_skip)) {
-		// Dropping it leaves the destination level unwritten, which the sampler
-		// clamp below makes harmless. Letting it through under LINEAR would
-		// corrupt the source image instead — strictly worse than doing nothing.
-		if (!warned_scaling_blit) {
-			warned_scaling_blit = 1;
-			LOGE("dropping scaling vkCmdBlitImage: this driver writes it to the wrong mip level");
+	// Only mip levels are broken, so only they are dropped. A non-zero source
+	// level reads nothing; a non-zero destination level writes the base level and
+	// destroys it. Dropping leaves the target unwritten, which the sampler clamp
+	// below makes harmless — strictly better than corrupting level 0.
+	if (mips && prop_on("debug.xdplus.vkblitskip", &blit_skip)) {
+		if (!warned_mip_blit) {
+			warned_mip_blit = 1;
+			LOGE("dropping vkCmdBlitImage with a non-zero mip level: this driver reads nothing from a mip source and writes a mip destination to level 0");
 		}
 		return;
 	}
