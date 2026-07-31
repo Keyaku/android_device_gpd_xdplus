@@ -105,6 +105,89 @@ static PFN_vkCmdDrawIndexed real_cdrawi;
 static PFN_vkCmdDrawIndirect real_cdrawind;
 static PFN_vkCmdDrawIndexedIndirect real_cdrawiind;
 static PFN_vkCmdClearAttachments real_cca;
+static PFN_vkCreateImage real_ci;
+static PFN_vkDestroyImage real_di;
+static PFN_vkAllocateMemory real_am;
+static PFN_vkFreeMemory real_fm;
+static PFN_vkGetImageMemoryRequirements real_gimr;
+static PFN_vkBindImageMemory real_bim;
+static PFN_vkCmdCopyImage real_cci;
+static PFN_vkCmdPipelineBarrier real_cpb;
+static PFN_vkBeginCommandBuffer real_bcb;
+static PFN_vkResetCommandBuffer real_rcb;
+static PFN_vkFreeCommandBuffers real_fcb;
+static PFN_vkCreateCommandPool real_ccpool;
+static PFN_vkResetCommandPool real_rcpool;
+static PFN_vkDestroyCommandPool real_dcpool;
+static PFN_vkAllocateCommandBuffers real_acb;
+static PFN_vkGetPhysicalDeviceMemoryProperties real_gpdmp;
+static PFN_vkEnumeratePhysicalDevices real_epd;
+static PFN_vkCreateInstance real_cinst;
+static VkInstance shim_instance;
+static VkPhysicalDeviceMemoryProperties mem_props;
+static int mem_props_loaded;
+static VkDevice shim_dev;
+
+// ---- live image metadata table --------------------------------------------
+
+// vkCmdBlitImage does not carry image formats or extents, but the emulation route
+// needs them to build correctly-sized scratch images. Track the subset we need
+// from vkCreateImage and drop it on vkDestroyImage.
+#define IMG_TABLE_MAX 1024
+struct img_info {
+	VkImage img;
+	VkFormat format;
+	VkExtent3D extent;
+	uint32_t array_layers;
+	uint32_t aspect; // guess: color unless depth/stencil format
+	int used;
+};
+static struct img_info img_table[IMG_TABLE_MAX];
+static pthread_mutex_t img_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static struct img_info *find_img(VkImage img) {
+	pthread_mutex_lock(&img_mu);
+	for (int i = 0; i < IMG_TABLE_MAX; i++) {
+		if (img_table[i].used && img_table[i].img == img) {
+			pthread_mutex_unlock(&img_mu);
+			return &img_table[i];
+		}
+	}
+	pthread_mutex_unlock(&img_mu);
+	return NULL;
+}
+
+static void remember_img(VkImage img, VkFormat format, VkExtent3D extent,
+	uint32_t array_layers) {
+	pthread_mutex_lock(&img_mu);
+	int slot = -1;
+	for (int i = 0; i < IMG_TABLE_MAX; i++) {
+		if (!img_table[i].used) { slot = i; break; }
+	}
+	if (slot < 0) {
+		pthread_mutex_unlock(&img_mu);
+		LOGE("image metadata table full");
+		return;
+	}
+	img_table[slot].img = img;
+	img_table[slot].format = format;
+	img_table[slot].extent = extent;
+	img_table[slot].array_layers = array_layers;
+	img_table[slot].aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+	img_table[slot].used = 1;
+	pthread_mutex_unlock(&img_mu);
+}
+
+static void forget_img(VkImage img) {
+	pthread_mutex_lock(&img_mu);
+	for (int i = 0; i < IMG_TABLE_MAX; i++) {
+		if (img_table[i].used && img_table[i].img == img) {
+			img_table[i].used = 0;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&img_mu);
+}
 
 // ---- persistent pipeline cache --------------------------------------------
 
@@ -431,6 +514,237 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 	return compile_batch(cp_thread, &a, &a.r, dev, &a.cache, n);
 }
 
+// ---- scratch-image helpers for mip blit emulation --------------------------
+
+// Per-command-buffer transient scratch images. The blob's vkCmdBlitImage is fine
+// for level-0 source and destination, but broken for any non-zero mip level. The
+// emulation route is: copy the real source level into a level-0 scratch, blit
+// level-0->level-0 into a second scratch at the destination extent, then copy
+// that scratch into the real destination level. Each scratch is created and
+// destroyed per command buffer; freeing must wait until GPU execution finishes,
+// which is when the command buffer is reset, re-begun or freed.
+
+#define CB_TABLE_MAX 256
+
+struct scratch_pair {
+	VkImage src_img;
+	VkDeviceMemory src_mem;
+	VkImage dst_img;
+	VkDeviceMemory dst_mem;
+};
+
+struct cb_scratch {
+	VkDevice dev;
+	VkCommandBuffer cb;
+	VkCommandPool pool;
+	struct scratch_pair *pairs;
+	unsigned count;
+	unsigned cap;
+};
+
+static struct cb_scratch cb_table[CB_TABLE_MAX];
+static pthread_mutex_t scratch_mu = PTHREAD_MUTEX_INITIALIZER;
+static VkPhysicalDevice physical_dev;
+
+static int find_memory_type(uint32_t mask, VkMemoryPropertyFlags flags,
+	VkPhysicalDeviceMemoryProperties *props) {
+	for (uint32_t i = 0; i < props->memoryTypeCount; i++) {
+		if ((mask & (1u << i)) && (props->memoryTypes[i].propertyFlags & flags) == flags)
+			return (int)i;
+	}
+	return -1;
+}
+
+static int alloc_scratch_image(VkDevice dev, VkFormat format, uint32_t width,
+	uint32_t height, uint32_t depth, VkImageUsageFlags usage,
+	VkPhysicalDeviceMemoryProperties *props, VkImage *img, VkDeviceMemory *mem) {
+	VkImageCreateInfo ici = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = depth > 1 ? VK_IMAGE_TYPE_3D : (height > 1 ? VK_IMAGE_TYPE_2D : VK_IMAGE_TYPE_1D),
+		.format = format,
+		.extent = {width, height, depth},
+		.mipLevels = 1,
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = usage,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	};
+	VkResult r = real_ci(dev, &ici, NULL, img);
+	if (r != VK_SUCCESS) { LOGE("scratch image create failed: %d", r); return -1; }
+	VkMemoryRequirements req;
+	real_gimr(dev, *img, &req);
+	uint32_t type = find_memory_type(req.memoryTypeBits,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, props);
+	if (type < 0) { LOGE("no device-local memory for scratch image"); real_di(dev, *img, NULL); return -1; }
+	VkMemoryAllocateInfo ai = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = req.size,
+		.memoryTypeIndex = type,
+	};
+	r = real_am(dev, &ai, NULL, mem);
+	if (r != VK_SUCCESS) { LOGE("scratch image alloc failed: %d", r); real_di(dev, *img, NULL); return -1; }
+	real_bim(dev, *img, *mem, 0);
+	return 0;
+}
+
+static void free_scratch_pair(VkDevice dev, struct scratch_pair *p) {
+	if (p->src_img) { real_di(dev, p->src_img, NULL); p->src_img = VK_NULL_HANDLE; }
+	if (p->src_mem) { real_fm(dev, p->src_mem, NULL); p->src_mem = VK_NULL_HANDLE; }
+	if (p->dst_img) { real_di(dev, p->dst_img, NULL); p->dst_img = VK_NULL_HANDLE; }
+	if (p->dst_mem) { real_fm(dev, p->dst_mem, NULL); p->dst_mem = VK_NULL_HANDLE; }
+}
+
+static void resolve_scratch_fns(VkDevice dev);
+static void ensure_mem_props(void);
+
+static void record_image_barrier(VkCommandBuffer cb, VkImage img,
+	VkImageLayout old_layout, VkImageLayout new_layout,
+	VkAccessFlags src_access, VkAccessFlags dst_access) {
+	VkImageMemoryBarrier b = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = src_access,
+		.dstAccessMask = dst_access,
+		.oldLayout = old_layout,
+		.newLayout = new_layout,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = img,
+		.subresourceRange = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+	real_cpb(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0, 0, NULL, 0, NULL, 1, &b);
+}
+
+static uint32_t mip_ext(uint32_t base, uint32_t level) {
+	uint32_t v = base >> level;
+	return v ? v : 1;
+}
+
+// Look up or allocate a scratch slot for this command buffer. Linear search is
+// fine: the number of in-flight mip blits in one command buffer is small.
+static struct scratch_pair *get_scratch_pair(VkDevice dev, VkCommandBuffer cb,
+	VkFormat format, uint32_t src_w, uint32_t src_h, uint32_t src_d,
+	uint32_t dst_w, uint32_t dst_h, uint32_t dst_d,
+	VkPhysicalDeviceMemoryProperties *props) {
+	pthread_mutex_lock(&scratch_mu);
+	struct cb_scratch *slot = NULL;
+	for (int i = 0; i < CB_TABLE_MAX; i++) {
+		if (cb_table[i].cb == cb) { slot = &cb_table[i]; break; }
+		if (!slot && cb_table[i].cb == VK_NULL_HANDLE) slot = &cb_table[i];
+	}
+	if (!slot) {
+		LOGE("out of command-buffer scratch slots");
+		pthread_mutex_unlock(&scratch_mu);
+		return NULL;
+	}
+	if (slot->cb == VK_NULL_HANDLE) {
+		slot->cb = cb;
+		slot->pairs = NULL;
+		slot->count = 0;
+		slot->cap = 0;
+	}
+	if (slot->count == slot->cap) {
+		unsigned new_cap = slot->cap ? slot->cap * 2 : 4;
+		struct scratch_pair *new_pairs = realloc(slot->pairs,
+			new_cap * sizeof(*slot->pairs));
+		if (!new_pairs) {
+			LOGE("realloc scratch pair list failed");
+			pthread_mutex_unlock(&scratch_mu);
+			return NULL;
+		}
+		memset(new_pairs + slot->cap, 0,
+			(new_cap - slot->cap) * sizeof(*slot->pairs));
+		slot->pairs = new_pairs;
+		slot->cap = new_cap;
+	}
+	struct scratch_pair *p = &slot->pairs[slot->count++];
+	pthread_mutex_unlock(&scratch_mu);
+	if (alloc_scratch_image(dev, format, src_w, src_h, src_d,
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			props, &p->src_img, &p->src_mem) != 0 ||
+	    alloc_scratch_image(dev, format, dst_w, dst_h, dst_d,
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			props, &p->dst_img, &p->dst_mem) != 0) {
+		free_scratch_pair(dev, p);
+		pthread_mutex_lock(&scratch_mu);
+		slot->count--;
+		pthread_mutex_unlock(&scratch_mu);
+		return NULL;
+	}
+	return p;
+}
+
+static void free_cb_scratch_images(VkDevice dev, struct cb_scratch *slot) {
+	VkDevice d = dev ? dev : slot->dev;
+	if (d) {
+		for (unsigned j = 0; j < slot->count; j++)
+			free_scratch_pair(d, &slot->pairs[j]);
+	}
+	free(slot->pairs);
+	slot->pairs = NULL;
+	slot->count = 0;
+	slot->cap = 0;
+}
+
+static void clear_cb(VkDevice dev, VkCommandBuffer cb) {
+	pthread_mutex_lock(&scratch_mu);
+	for (int i = 0; i < CB_TABLE_MAX; i++) {
+		if (cb_table[i].cb == cb) {
+			free_cb_scratch_images(dev, &cb_table[i]);
+			cb_table[i].dev = VK_NULL_HANDLE;
+			cb_table[i].cb = VK_NULL_HANDLE;
+			cb_table[i].pool = VK_NULL_HANDLE;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&scratch_mu);
+}
+
+static void clear_pool(VkDevice dev, VkCommandPool pool) {
+	pthread_mutex_lock(&scratch_mu);
+	for (int i = 0; i < CB_TABLE_MAX; i++) {
+		if (cb_table[i].pool == pool) {
+			free_cb_scratch_images(dev, &cb_table[i]);
+			cb_table[i].dev = VK_NULL_HANDLE;
+			cb_table[i].cb = VK_NULL_HANDLE;
+			cb_table[i].pool = VK_NULL_HANDLE;
+		}
+	}
+	pthread_mutex_unlock(&scratch_mu);
+}
+
+// Force the scratch table to record a device for slots created before
+// vkAllocateCommandBuffers was hooked (e.g. loader-internal command buffers).
+static void slot_claim_device(VkCommandBuffer cb, VkDevice dev) {
+	pthread_mutex_lock(&scratch_mu);
+	for (int i = 0; i < CB_TABLE_MAX; i++) {
+		if (cb_table[i].cb == cb) {
+			if (!cb_table[i].dev) cb_table[i].dev = dev;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&scratch_mu);
+}
+
+static void remember_pool(VkDevice dev, VkCommandBuffer cb, VkCommandPool pool) {
+	pthread_mutex_lock(&scratch_mu);
+	for (int i = 0; i < CB_TABLE_MAX; i++) {
+		if (cb_table[i].cb == cb) {
+			cb_table[i].dev = dev;
+			cb_table[i].pool = pool;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&scratch_mu);
+}
+
 // ---- broken vkCmdBlitImage, and the mip chains built on it -----------------
 
 // This blob's vkCmdBlitImage mishandles mip levels. It is *not* the scaling that
@@ -478,14 +792,11 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 // any blit that names a non-zero mip level on either side, and keep samplers on
 // level 0 because no chain gets generated. Level-0 blits — including scaling
 // ones — go straight through, since they are correct.
-//  - debug.xdplus.vkblitnearest=0 stops the 1:1 filter downgrade. That
-//    downgrade is now known to be unnecessary (LINEAR at level 0 is bit-exact
-//    for a 1:1 blit); it is kept only because it is harmless and documented.
 //  - debug.xdplus.vkmiplod=0 stops clamping samplers to level 0.
-//  - debug.xdplus.vkblitskip=0 lets mip-level blits through to the driver.
-static int blit_downgrade = -1;
+//  - debug.xdplus.vkblitmip=0 disables the emulation and drops mip-level
+//    blits (the old behaviour).
 static int miplod_clamp = -1;
-static int blit_skip = -1;
+static int blit_mip_emulate = -1;
 static int warned_mip_blit;
 
 static int prop_on(const char *name, int *cache) {
@@ -527,36 +838,203 @@ static int khr_name(const char *name, char *buf, size_t n) {
 	return 1;
 }
 
+static VkDevice cb_to_device(VkCommandBuffer cb) {
+	VkDevice dev = shim_dev;
+	pthread_mutex_lock(&scratch_mu);
+	for (int i = 0; i < CB_TABLE_MAX; i++) {
+		if (cb_table[i].cb == cb) {
+			if (cb_table[i].dev) dev = cb_table[i].dev;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&scratch_mu);
+	return dev;
+}
+
+static void ensure_mem_props(void) {
+	if (mem_props_loaded) return;
+	if (!real_gpdmp && shim_instance) {
+		real_gpdmp = (PFN_vkGetPhysicalDeviceMemoryProperties)
+			real_gipa(shim_instance, "vkGetPhysicalDeviceMemoryProperties");
+	}
+	if (!real_gpdmp && shim_dev) {
+		real_gpdmp = (PFN_vkGetPhysicalDeviceMemoryProperties)
+			real_gdpa(shim_dev, "vkGetPhysicalDeviceMemoryProperties");
+	}
+	if (real_gpdmp && physical_dev) {
+		real_gpdmp(physical_dev, &mem_props);
+		mem_props_loaded = 1;
+		LOGI("memory properties loaded in ensure_mem_props");
+	}
+}
+
+static int format_is_depth_stencil(VkFormat f) {
+	switch (f) {
+	case VK_FORMAT_D16_UNORM:
+	case VK_FORMAT_D32_SFLOAT:
+	case VK_FORMAT_S8_UINT:
+	case VK_FORMAT_D16_UNORM_S8_UINT:
+	case VK_FORMAT_D24_UNORM_S8_UINT:
+	case VK_FORMAT_D32_SFLOAT_S8_UINT:
+		return 1;
+	default: return 0;
+	}
+}
+
+static void emit_emulated_blit(VkCommandBuffer cb, VkDevice dev,
+	VkImage src, VkImageLayout src_layout,
+	VkImage dst, VkImageLayout dst_layout,
+	const VkImageBlit *region, VkFilter filter,
+	struct img_info *src_info, struct img_info *dst_info) {
+	uint32_t src_mip = region->srcSubresource.mipLevel;
+	uint32_t dst_mip = region->dstSubresource.mipLevel;
+	VkFormat fmt = src_info ? src_info->format : (dst_info ? dst_info->format : VK_FORMAT_R8G8B8A8_UNORM);
+	VkExtent3D src_ext = src_info ? src_info->extent : (VkExtent3D){1,1,1};
+	VkExtent3D dst_ext = dst_info ? dst_info->extent : (VkExtent3D){1,1,1};
+	uint32_t src_w = mip_ext(src_ext.width, src_mip);
+	uint32_t src_h = mip_ext(src_ext.height, src_mip);
+	uint32_t src_d = mip_ext(src_ext.depth, src_mip);
+	uint32_t dst_w = mip_ext(dst_ext.width, dst_mip);
+	uint32_t dst_h = mip_ext(dst_ext.height, dst_mip);
+	uint32_t dst_d = mip_ext(dst_ext.depth, dst_mip);
+	uint32_t layers = region->srcSubresource.layerCount;
+	if (!layers) layers = 1;
+
+	struct scratch_pair *p = get_scratch_pair(dev, cb, fmt, src_w, src_h, src_d, dst_w, dst_h, dst_d, &mem_props);
+	if (!p) { LOGE("scratch alloc failed, dropping mip blit"); return; }
+
+	// Source mip -> scratch_src level 0, if needed.
+	if (src_mip != 0) {
+		record_image_barrier(cb, p->src_img, VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+		VkImageCopy copy_src = {
+			.srcSubresource = {
+				.aspectMask = region->srcSubresource.aspectMask,
+				.mipLevel = src_mip,
+				.baseArrayLayer = region->srcSubresource.baseArrayLayer,
+				.layerCount = layers,
+			},
+			.dstSubresource = {
+				.aspectMask = region->srcSubresource.aspectMask,
+				.mipLevel = 0,
+				.baseArrayLayer = 0,
+				.layerCount = layers,
+			},
+			.srcOffset = region->srcOffsets[0],
+			.dstOffset = region->srcOffsets[0],
+			.extent = {
+				.width = (uint32_t)(region->srcOffsets[1].x - region->srcOffsets[0].x),
+				.height = (uint32_t)(region->srcOffsets[1].y - region->srcOffsets[0].y),
+				.depth = (uint32_t)(region->srcOffsets[1].z - region->srcOffsets[0].z),
+			},
+		};
+		if (!copy_src.extent.width) copy_src.extent.width = 1;
+		if (!copy_src.extent.height) copy_src.extent.height = 1;
+		if (!copy_src.extent.depth) copy_src.extent.depth = 1;
+		real_cci(cb, src, src_layout, p->src_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_src);
+		record_image_barrier(cb, p->src_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+	}
+
+	// Intermediate level-0 blit: scratch_src (or real src if src_mip==0) -> scratch_dst.
+	record_image_barrier(cb, p->dst_img, VK_IMAGE_LAYOUT_UNDEFINED,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+	VkImageBlit mid = *region;
+	mid.srcSubresource.mipLevel = 0;
+	mid.srcSubresource.baseArrayLayer = 0;
+	mid.dstSubresource.mipLevel = 0;
+	mid.dstSubresource.baseArrayLayer = 0;
+	VkImage mid_src = (src_mip == 0) ? src : p->src_img;
+	VkImageLayout mid_src_layout = (src_mip == 0) ? src_layout : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	real_cbi(cb, mid_src, mid_src_layout, p->dst_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &mid, filter);
+
+	// scratch_dst level 0 -> real dst mip, if needed.
+	record_image_barrier(cb, p->dst_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+	if (dst_mip != 0) {
+		VkImageCopy copy_dst = {
+			.srcSubresource = {
+				.aspectMask = region->dstSubresource.aspectMask,
+				.mipLevel = 0,
+				.baseArrayLayer = 0,
+				.layerCount = layers,
+			},
+			.dstSubresource = {
+				.aspectMask = region->dstSubresource.aspectMask,
+				.mipLevel = dst_mip,
+				.baseArrayLayer = region->dstSubresource.baseArrayLayer,
+				.layerCount = layers,
+			},
+			.srcOffset = region->dstOffsets[0],
+			.dstOffset = region->dstOffsets[0],
+			.extent = {
+				.width = (uint32_t)(region->dstOffsets[1].x - region->dstOffsets[0].x),
+				.height = (uint32_t)(region->dstOffsets[1].y - region->dstOffsets[0].y),
+				.depth = (uint32_t)(region->dstOffsets[1].z - region->dstOffsets[0].z),
+			},
+		};
+		if (!copy_dst.extent.width) copy_dst.extent.width = 1;
+		if (!copy_dst.extent.height) copy_dst.extent.height = 1;
+		if (!copy_dst.extent.depth) copy_dst.extent.depth = 1;
+		real_cci(cb, p->dst_img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, dst_layout, 1, &copy_dst);
+	}
+}
+
 static VKAPI_ATTR void VKAPI_CALL shim_CmdBlitImage(
 	VkCommandBuffer cb, VkImage src, VkImageLayout src_layout,
 	VkImage dst, VkImageLayout dst_layout, uint32_t n,
 	const VkImageBlit *regions, VkFilter filter) {
-	int scales = 0, mips = 0;
+	int mips = 0;
 	for (uint32_t i = 0; i < n; i++) {
-		const VkOffset3D *s = regions[i].srcOffsets, *d = regions[i].dstOffsets;
-		if (s[1].x - s[0].x != d[1].x - d[0].x ||
-			s[1].y - s[0].y != d[1].y - d[0].y ||
-			s[1].z - s[0].z != d[1].z - d[0].z) scales = 1;
 		if (regions[i].srcSubresource.mipLevel ||
 			regions[i].dstSubresource.mipLevel) mips = 1;
 	}
-	// Only mip levels are broken, so only they are dropped. A non-zero source
-	// level reads nothing; a non-zero destination level writes the base level and
-	// destroys it. Dropping leaves the target unwritten, which the sampler clamp
-	// below makes harmless — strictly better than corrupting level 0.
-	if (mips && prop_on("debug.xdplus.vkblitskip", &blit_skip)) {
+	// Level-0 blits pass through unchanged. The earlier 1:1 LINEAR->NEAREST
+	// downgrade was a workaround for a misdiagnosis; level-0 scaling is exact on
+	// this blob, and a 1:1 LINEAR blit is a no-op.
+	if (!mips) {
+		real_cbi(cb, src, src_layout, dst, dst_layout, n, regions, filter);
+		return;
+	}
+
+	// Mip-level blit: emulate if enabled, otherwise drop.
+	if (!prop_on("debug.xdplus.vkblitmip", &blit_mip_emulate)) {
 		if (!warned_mip_blit) {
 			warned_mip_blit = 1;
-			LOGE("dropping vkCmdBlitImage with a non-zero mip level: this driver reads nothing from a mip source and writes a mip destination to level 0");
+			LOGE("dropping vkCmdBlitImage with a non-zero mip level: emulation disabled");
 		}
 		return;
 	}
-	// A 1:1 blit is correct under NEAREST and does nothing under LINEAR, so
-	// the downgrade is a straight win.
-	if (!scales && filter == VK_FILTER_LINEAR &&
-		prop_on("debug.xdplus.vkblitnearest", &blit_downgrade))
-		filter = VK_FILTER_NEAREST;
-	real_cbi(cb, src, src_layout, dst, dst_layout, n, regions, filter);
+
+	VkDevice dev = cb_to_device(cb);
+	if (dev == VK_NULL_HANDLE) {
+		LOGE("mip blit: no device for command buffer, dropping");
+		return;
+	}
+	slot_claim_device(cb, dev);
+	resolve_scratch_fns(dev);
+	ensure_mem_props();
+	if (!real_ci || !real_cci || !real_cbi || !mem_props_loaded) {
+		LOGE("mip blit: scratch functions unavailable, dropping");
+		return;
+	}
+
+	struct img_info *src_info = find_img(src);
+	struct img_info *dst_info = find_img(dst);
+	if (!src_info || !dst_info) {
+		LOGE("mip blit: missing image metadata (src=%p dst=%p), dropping", (void*)(uintptr_t)src, (void*)(uintptr_t)dst);
+		return;
+	}
+	if (format_is_depth_stencil(src_info->format)) {
+		LOGE("mip blit: depth/stencil format not emulated, dropping");
+		return;
+	}
+
+	for (uint32_t i = 0; i < n; i++)
+		emit_emulated_blit(cb, dev, src, src_layout, dst, dst_layout,
+			&regions[i], filter, src_info, dst_info);
 }
 
 // Since no generated mip chain can be trusted, keep samplers on level 0. The
@@ -712,6 +1190,84 @@ static VKAPI_ATTR void VKAPI_CALL shim_CmdClearAttachments(
 	real_cca(cb, ac, at, rc, rects);
 }
 
+static void resolve_scratch_fns(VkDevice dev) {
+	if (!real_ci) real_ci = (PFN_vkCreateImage)real_gdpa(dev, "vkCreateImage");
+	if (!real_di) real_di = (PFN_vkDestroyImage)real_gdpa(dev, "vkDestroyImage");
+	if (!real_am) real_am = (PFN_vkAllocateMemory)real_gdpa(dev, "vkAllocateMemory");
+	if (!real_fm) real_fm = (PFN_vkFreeMemory)real_gdpa(dev, "vkFreeMemory");
+	if (!real_gimr) real_gimr = (PFN_vkGetImageMemoryRequirements)real_gdpa(dev, "vkGetImageMemoryRequirements");
+	if (!real_bim) real_bim = (PFN_vkBindImageMemory)real_gdpa(dev, "vkBindImageMemory");
+	if (!real_cci) real_cci = (PFN_vkCmdCopyImage)real_gdpa(dev, "vkCmdCopyImage");
+	if (!real_cpb) real_cpb = (PFN_vkCmdPipelineBarrier)real_gdpa(dev, "vkCmdPipelineBarrier");
+	if (!real_bcb) real_bcb = (PFN_vkBeginCommandBuffer)real_gdpa(dev, "vkBeginCommandBuffer");
+	if (!real_rcb) real_rcb = (PFN_vkResetCommandBuffer)real_gdpa(dev, "vkResetCommandBuffer");
+	if (!real_fcb) real_fcb = (PFN_vkFreeCommandBuffers)real_gdpa(dev, "vkFreeCommandBuffers");
+	if (!real_ccpool) real_ccpool = (PFN_vkCreateCommandPool)real_gdpa(dev, "vkCreateCommandPool");
+	if (!real_rcpool) real_rcpool = (PFN_vkResetCommandPool)real_gdpa(dev, "vkResetCommandPool");
+	if (!real_dcpool) real_dcpool = (PFN_vkDestroyCommandPool)real_gdpa(dev, "vkDestroyCommandPool");
+	if (!real_acb) real_acb = (PFN_vkAllocateCommandBuffers)real_gdpa(dev, "vkAllocateCommandBuffers");
+}
+
+// ---- image metadata hooks -------------------------------------------------
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateImage(
+	VkDevice dev, const VkImageCreateInfo *ci,
+	const VkAllocationCallbacks *ac, VkImage *out) {
+	VkResult r = real_ci(dev, ci, ac, out);
+	if (r == VK_SUCCESS && ci) remember_img(*out, ci->format, ci->extent, ci->arrayLayers);
+	return r;
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_DestroyImage(
+	VkDevice dev, VkImage img, const VkAllocationCallbacks *ac) {
+	forget_img(img);
+	real_di(dev, img, ac);
+}
+
+// ---- command-buffer lifetime hooks ----------------------------------------
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_BeginCommandBuffer(
+	VkCommandBuffer cb, const VkCommandBufferBeginInfo *bi) {
+	// Implicit reset: any scratch images owned by this command buffer are now
+	// safe to free because GPU execution has finished (or will not start).
+	clear_cb(VK_NULL_HANDLE, cb); // device not needed for metadata clear
+	return real_bcb(cb, bi);
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_ResetCommandBuffer(
+	VkCommandBuffer cb, VkCommandBufferResetFlags flags) {
+	clear_cb(VK_NULL_HANDLE, cb);
+	return real_rcb(cb, flags);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_FreeCommandBuffers(
+	VkDevice dev, VkCommandPool pool, uint32_t n, const VkCommandBuffer *cbs) {
+	for (uint32_t i = 0; i < n; i++) clear_cb(dev, cbs[i]);
+	real_fcb(dev, pool, n, cbs);
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_AllocateCommandBuffers(
+	VkDevice dev, const VkCommandBufferAllocateInfo *ai, VkCommandBuffer *cbs) {
+	VkResult r = real_acb(dev, ai, cbs);
+	if (r == VK_SUCCESS && ai) {
+		for (uint32_t i = 0; i < ai->commandBufferCount; i++)
+			remember_pool(dev, cbs[i], ai->commandPool);
+	}
+	return r;
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_ResetCommandPool(
+	VkDevice dev, VkCommandPool pool, VkCommandPoolResetFlags flags) {
+	clear_pool(dev, pool);
+	return real_rcpool(dev, pool, flags);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_DestroyCommandPool(
+	VkDevice dev, VkCommandPool pool, const VkAllocationCallbacks *ac) {
+	clear_pool(dev, pool);
+	real_dcpool(dev, pool, ac);
+}
+
 // ---- device lifetime -------------------------------------------------------
 
 // Called with cache_mu held. `dev` is the device the cache belongs to, or NULL
@@ -743,6 +1299,27 @@ static VKAPI_ATTR void VKAPI_CALL shim_DestroyDevice(
 	pthread_mutex_lock(&cache_mu);
 	if (cache_dev == dev) drop_disk_cache(dev);
 	pthread_mutex_unlock(&cache_mu);
+	// Free every scratch image associated with this device. We do not store
+	// the device per command buffer; clear all slots because the process only
+	// ever has one active VkDevice on this hardware anyway.
+	pthread_mutex_lock(&scratch_mu);
+	for (int i = 0; i < CB_TABLE_MAX; i++) {
+		if (cb_table[i].cb != VK_NULL_HANDLE) {
+			for (unsigned j = 0; j < cb_table[i].count; j++)
+				free_scratch_pair(dev, &cb_table[i].pairs[j]);
+			free(cb_table[i].pairs);
+			cb_table[i].dev = VK_NULL_HANDLE;
+			cb_table[i].cb = VK_NULL_HANDLE;
+			cb_table[i].pool = VK_NULL_HANDLE;
+			cb_table[i].pairs = NULL;
+			cb_table[i].count = 0;
+			cb_table[i].cap = 0;
+		}
+	}
+	pthread_mutex_unlock(&scratch_mu);
+	pthread_mutex_lock(&img_mu);
+	for (int i = 0; i < IMG_TABLE_MAX; i++) img_table[i].used = 0;
+	pthread_mutex_unlock(&img_mu);
 	real_dd(dev, ac);
 }
 
@@ -760,6 +1337,25 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateDevice(
 		drop_disk_cache(NULL);
 	}
 	pthread_mutex_unlock(&cache_mu);
+	physical_dev = pd;
+	shim_dev = *out;
+	if (!real_gpdmp) {
+		real_gpdmp = (PFN_vkGetPhysicalDeviceMemoryProperties)
+			real_gdpa(*out, "vkGetPhysicalDeviceMemoryProperties");
+	}
+	if (real_gpdmp) real_gpdmp(pd, &mem_props);
+	mem_props_loaded = real_gpdmp ? 1 : 0;
+	LOGI("vkshim device ready: dev=%p physical=%p gpdmp=%p mem_props_loaded=%d", *out, pd, real_gpdmp, mem_props_loaded);
+	return r;
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateInstance(
+	const VkInstanceCreateInfo *ci, const VkAllocationCallbacks *ac, VkInstance *out) {
+	VkResult r = real_cinst(ci, ac, out);
+	if (r != VK_SUCCESS) return r;
+	shim_instance = *out;
+	real_gpdmp = (PFN_vkGetPhysicalDeviceMemoryProperties)real_gipa(*out, "vkGetPhysicalDeviceMemoryProperties");
+	real_epd = (PFN_vkEnumeratePhysicalDevices)real_gipa(*out, "vkEnumeratePhysicalDevices");
 	return r;
 }
 
@@ -786,6 +1382,38 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
 	if (!strcmp(name, "vkCreateSampler")) {
 		if (!real_cs) real_cs = (PFN_vkCreateSampler)real_gdpa(dev, name);
 		return real_cs ? (PFN_vkVoidFunction)shim_CreateSampler : NULL;
+	}
+	if (!strcmp(name, "vkCreateImage")) {
+		if (!real_ci) real_ci = (PFN_vkCreateImage)real_gdpa(dev, name);
+		return real_ci ? (PFN_vkVoidFunction)shim_CreateImage : NULL;
+	}
+	if (!strcmp(name, "vkDestroyImage")) {
+		if (!real_di) real_di = (PFN_vkDestroyImage)real_gdpa(dev, name);
+		return real_di ? (PFN_vkVoidFunction)shim_DestroyImage : NULL;
+	}
+	if (!strcmp(name, "vkBeginCommandBuffer")) {
+		if (!real_bcb) real_bcb = (PFN_vkBeginCommandBuffer)real_gdpa(dev, name);
+		return real_bcb ? (PFN_vkVoidFunction)shim_BeginCommandBuffer : NULL;
+	}
+	if (!strcmp(name, "vkResetCommandBuffer")) {
+		if (!real_rcb) real_rcb = (PFN_vkResetCommandBuffer)real_gdpa(dev, name);
+		return real_rcb ? (PFN_vkVoidFunction)shim_ResetCommandBuffer : NULL;
+	}
+	if (!strcmp(name, "vkFreeCommandBuffers")) {
+		if (!real_fcb) real_fcb = (PFN_vkFreeCommandBuffers)real_gdpa(dev, name);
+		return real_fcb ? (PFN_vkVoidFunction)shim_FreeCommandBuffers : NULL;
+	}
+	if (!strcmp(name, "vkAllocateCommandBuffers")) {
+		if (!real_acb) real_acb = (PFN_vkAllocateCommandBuffers)real_gdpa(dev, name);
+		return real_acb ? (PFN_vkVoidFunction)shim_AllocateCommandBuffers : NULL;
+	}
+	if (!strcmp(name, "vkResetCommandPool")) {
+		if (!real_rcpool) real_rcpool = (PFN_vkResetCommandPool)real_gdpa(dev, name);
+		return real_rcpool ? (PFN_vkVoidFunction)shim_ResetCommandPool : NULL;
+	}
+	if (!strcmp(name, "vkDestroyCommandPool")) {
+		if (!real_dcpool) real_dcpool = (PFN_vkDestroyCommandPool)real_gdpa(dev, name);
+		return real_dcpool ? (PFN_vkVoidFunction)shim_DestroyCommandPool : NULL;
 	}
 	// The whole suppressed-pass set has to be hooked together: hooking Begin
 	// alone leaves the draws to reach a driver with no pass state.
@@ -856,6 +1484,10 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetInstanceProcAddr(
 	if (!strcmp(name, "vkDestroyDevice")) {
 		if (!real_dd) real_dd = (PFN_vkDestroyDevice)real_gipa(inst, name);
 		return real_dd ? (PFN_vkVoidFunction)shim_DestroyDevice : NULL;
+	}
+	if (!strcmp(name, "vkCreateInstance")) {
+		if (!real_cinst) real_cinst = (PFN_vkCreateInstance)real_gipa(inst, name);
+		return real_cinst ? (PFN_vkVoidFunction)shim_CreateInstance : NULL;
 	}
 	PFN_vkVoidFunction f = real_gipa(inst, name);
 	if (!f && prop_on("debug.xdplus.vkkhralias", &khr_alias)) {
