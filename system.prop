@@ -92,3 +92,9 @@ persist.sys.wifi_ps_pin_off=1
 # eFuse-gated, A/B-proven), so patch 0013 labels the standard 802.11n when this
 # is set. Cosmetic (correct UI badge); unset = stock UNKNOWN behavior.
 persist.sys.wifi_standard_11n_fallback=1
+
+# Flutter Impeller crashes in native code on PowerVR GX6250 DDK 1.9.
+# Patch 0027 injects io.flutter.embedding.android.EnableImpeller=false for these
+# packages via PackageManagerService, forcing the stable Skia/OpenGL backend.
+# No APK modification needed; Vulkan games remain untouched.
+persist.sys.xdplus.flutter_disable_impeller=dev.imranr.obtainium,dev.bikram.obtainx

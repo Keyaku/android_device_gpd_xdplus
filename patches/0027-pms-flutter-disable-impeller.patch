@@ -1,0 +1,101 @@
+From 1fe35fc2830bc0307e2ad3702005a5d69845bc1c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sat, 1 Aug 2026 00:31:22 +0100
+Subject: [PATCH] pms: disable Flutter Impeller for selected packages on GPD
+ XD+
+
+Flutter Impeller crashes in native code on the PowerVR GX6250 DDK 1.9
+blob because both the Vulkan and OpenGL-ES Impeller paths fail on this
+device. The supported opt-out is the AndroidManifest meta-data key
+io.flutter.embedding.android.EnableImpeller=false.
+
+Instead of modifying third-party APKs, inject that meta-data flag in
+PackageManagerService.getApplicationInfo() for packages listed in the
+persist.sys.xdplus.flutter_disable_impeller property. The list is
+comma-separated; debug.xdplus.flutter_disable_impeller overrides it live.
+
+Obtainium and ObtainX are blocked by default once the property is set.
+
+Changes:
+- Add maybeInjectFlutterDisableImpeller() and the two property keys.
+- Hook the ApplicationInfo return paths in getApplicationInfoInternal(),
+  generateApplicationInfoFromSettingsLPw(), and getInstalledApplications().
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: I8d24c862c3c5f3b04160e8c6532dcd9af4c6fc14
+---
+ .../server/pm/PackageManagerService.java      | 37 +++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/services/core/java/com/android/server/pm/PackageManagerService.java b/services/core/java/com/android/server/pm/PackageManagerService.java
+index a968b447..0dabc027 100644
+--- a/services/core/java/com/android/server/pm/PackageManagerService.java
++++ b/services/core/java/com/android/server/pm/PackageManagerService.java
+@@ -5027,6 +5027,40 @@ public class PackageManagerService extends IPackageManager.Stub
+         return null;
+     }
+ 
++    // GPD XD+: Flutter Impeller crashes on PowerVR GX6250 Vulkan/GL paths.
++    // Inject io.flutter.embedding.android.EnableImpeller=false into the
++    // ApplicationInfo metaData for selected packages, so third-party Flutter apps
++    // fall back to the stable Skia/OpenGL backend without modifying APKs.
++    // The list is read from persist.sys.xdplus.flutter_disable_impeller (comma
++    // separated); debug.xdplus.flutter_disable_impeller overrides it live.
++    private static final String PROP_FLUTTER_DISABLE_IMPELLER =
++            "persist.sys.xdplus.flutter_disable_impeller";
++    private static final String PROP_DEBUG_FLUTTER_DISABLE_IMPELLER =
++            "debug.xdplus.flutter_disable_impeller";
++    private static final String META_ENABLE_IMPELLER =
++            "io.flutter.embedding.android.EnableImpeller";
++
++    private void maybeInjectFlutterDisableImpeller(ApplicationInfo ai, int flags) {
++        if (ai == null || (flags & PackageManager.GET_META_DATA) == 0) {
++            return;
++        }
++        String list = SystemProperties.get(PROP_DEBUG_FLUTTER_DISABLE_IMPELLER);
++        if (TextUtils.isEmpty(list)) {
++            list = SystemProperties.get(PROP_FLUTTER_DISABLE_IMPELLER);
++        }
++        if (TextUtils.isEmpty(list)) {
++            return;
++        }
++        if (!Arrays.asList(list.split(",")).contains(ai.packageName)) {
++            return;
++        }
++        if (ai.metaData == null) {
++            ai.metaData = new Bundle();
++        }
++        ai.metaData.putBoolean(META_ENABLE_IMPELLER, false);
++        Slog.i(TAG, "Flutter Impeller disabled for package " + ai.packageName);
++    }
++
+     @GuardedBy("mLock")
+     private ApplicationInfo generateApplicationInfoFromSettingsLPw(String packageName, int flags,
+             int filterCallingUid, int userId) {
+@@ -5050,6 +5084,7 @@ public class PackageManagerService extends IPackageManager.Stub
+                     ps.readUserState(userId), userId, ps);
+             if (ai != null) {
+                 ai.packageName = resolveExternalPackageNameLPr(ps.pkg);
++                maybeInjectFlutterDisableImpeller(ai, flags);
+             }
+             return ai;
+         }
+@@ -5102,6 +5137,7 @@ public class PackageManagerService extends IPackageManager.Stub
+                         p, flags, ps.readUserState(userId), userId, ps);
+                 if (ai != null) {
+                     ai.packageName = resolveExternalPackageNameLPr(p);
++                    maybeInjectFlutterDisableImpeller(ai, flags);
+                 }
+                 return ai;
+             }
+@@ -8894,6 +8930,7 @@ public class PackageManagerService extends IPackageManager.Stub
+                                 ps.readUserState(userId), userId, ps);
+                         if (ai != null) {
+                             ai.packageName = resolveExternalPackageNameLPr(p);
++                            maybeInjectFlutterDisableImpeller(ai, flags);
+                             list.add(ai);
+                         }
+                     }
+-- 
+2.55.0
+

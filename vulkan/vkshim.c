@@ -128,6 +128,19 @@ static VkPhysicalDeviceMemoryProperties mem_props;
 static int mem_props_loaded;
 static VkDevice shim_dev;
 
+// Flutter Impeller Vulkan crashes on GPD XD+.
+// Impeller calls vkEnumeratePhysicalDevices and then assumes a fully working
+// Vulkan driver; the DDK 1.9 PowerVR blob does not satisfy those assumptions
+// and crashes in native code on launch. Deny Vulkan to known Flutter apps so
+// they fall back to Impeller OpenGLES / Skia. Emulators and games keep Vulkan.
+// debug.xdplus.fluttervk=1 bypasses the block; debug.xdplus.vkblockall=1
+// forces it on for every app (A/B testing).
+static const char *flutter_block_pkgs[] = {
+	"dev.imranr.obtainium",
+	"dev.bikram.obtainx",
+	NULL
+};
+
 // ---- live image metadata table --------------------------------------------
 
 // vkCmdBlitImage does not carry image formats or extents, but the emulation route
@@ -244,6 +257,18 @@ static const char *pkg_name(void) {
 		if (c) *c = '\0';
 	}
 	return pkg;
+}
+
+static int flutter_block_active(void) {
+	char v[PROP_VALUE_MAX] = {0};
+	__system_property_get("debug.xdplus.fluttervk", v);
+	if (v[0] == '1') return 0;
+	__system_property_get("debug.xdplus.vkblockall", v);
+	if (v[0] == '1') return 1;
+	const char *pkg = pkg_name();
+	for (int i = 0; flutter_block_pkgs[i]; i++)
+		if (!strcmp(pkg, flutter_block_pkgs[i])) return 1;
+	return 0;
 }
 
 static size_t cap_bytes(const char *name, unsigned def_mb) {
@@ -1359,6 +1384,16 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateInstance(
 	return r;
 }
 
+static VKAPI_ATTR VkResult VKAPI_CALL shim_EnumeratePhysicalDevices(
+	VkInstance instance, uint32_t *pDeviceCount, VkPhysicalDevice *pPhysicalDevices) {
+	if (flutter_block_active()) {
+		LOGI("denying Vulkan to %s (Flutter Impeller block)", pkg_name());
+		*pDeviceCount = 0;
+		return VK_SUCCESS;
+	}
+	return real_epd(instance, pDeviceCount, pPhysicalDevices);
+}
+
 // ---- proc-addr interposition ----------------------------------------------
 
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
@@ -1488,6 +1523,10 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetInstanceProcAddr(
 	if (!strcmp(name, "vkCreateInstance")) {
 		if (!real_cinst) real_cinst = (PFN_vkCreateInstance)real_gipa(inst, name);
 		return real_cinst ? (PFN_vkVoidFunction)shim_CreateInstance : NULL;
+	}
+	if (!strcmp(name, "vkEnumeratePhysicalDevices")) {
+		if (!real_epd) real_epd = (PFN_vkEnumeratePhysicalDevices)real_gipa(inst, name);
+		return real_epd ? (PFN_vkVoidFunction)shim_EnumeratePhysicalDevices : NULL;
 	}
 	PFN_vkVoidFunction f = real_gipa(inst, name);
 	if (!f && prop_on("debug.xdplus.vkkhralias", &khr_alias)) {
