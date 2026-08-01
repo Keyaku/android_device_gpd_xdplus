@@ -200,6 +200,37 @@ sdcardfs_appid_fix() {
 	return 0
 }
 
+# One repair pass at boot_completed is not enough: something rewrites the wrong
+# values roughly 15 s later (measured 2026-08-01 - correct at boot_completed+4 s,
+# wrong again by +20 s, then stable). The producer is unidentified, so watch a
+# canary package for a bounded window and repair again whenever it goes wrong.
+# Nothing rewrites it after the boot window, so the watch ends rather than
+# running forever. persist.sys.xdplus.appidfix=0 disables the whole thing.
+sdcardfs_appid_watch() {
+	[ "$(getprop persist.sys.xdplus.appidfix)" = "0" ] && return 0
+
+	CANARY_PKG=""
+	CANARY_UID=""
+	while read -r PKG UID REST; do
+		[ -f "/config/sdcardfs/$PKG/appid" ] || continue
+		case "$UID" in ''|*[!0-9]*) continue ;; esac
+		CANARY_PKG="$PKG"; CANARY_UID="$UID"
+		break
+	done < /data/system/packages.list
+
+	sdcardfs_appid_fix
+	[ -n "$CANARY_PKG" ] || return 0
+
+	i=0
+	while [ "$i" -lt 40 ]; do
+		sleep 3
+		i=$((i + 1))
+		[ "$(cat "/config/sdcardfs/$CANARY_PKG/appid" 2>/dev/null)" = "$CANARY_UID" ] && continue
+		xlog "sdcardfs appid reverted (canary $CANARY_PKG), repairing again"
+		sdcardfs_appid_fix
+	done
+}
+
 vkcache_prune() {
 	DIR=/data/vkshim
 	[ -d "$DIR" ] || return 0
@@ -249,7 +280,7 @@ case "$CMD" in
 	# KNOWN-BAD: it unfreezes nothing and makes any freeze sticky across
 	# reboots), so the only work here is holding the shader-cache directory
 	# under budget — the one place that can, now that the directory is sticky.
-	boot)      sdcardfs_appid_fix; vkcache_prune ;;
+	boot)      vkcache_prune; sdcardfs_appid_watch ;;
 	vkcache_prune) vkcache_prune ;;
 	vkcache_clear) vkcache_clear ;;
 	# Compile-progress relay: exits quietly, and must NOT clear sys.xdplus.action
