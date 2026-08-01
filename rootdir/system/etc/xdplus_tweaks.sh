@@ -160,77 +160,6 @@ vknotify() {
 #
 # Oldest first, because a cache that has not been written in a long time belongs
 # to something the user has not played in a long time.
-# sdcardfs appid repair.
-#
-# sdcardfs derives the owner of /storage/emulated/0/Android/data/<pkg> from the
-# value in /config/sdcardfs/<pkg>/appid: inode uid = userid * 100000 + appid.
-# The correct value is the app's full uid (10152 for u0_a152). Measured on this
-# device: every entry held uid - 10000 (152), so every app was "other" on its own
-# data directory - mode 0771 leaves it --x, and the app gets EACCES writing files
-# it owns. RetroArch's "Failed to save config file" was this, and it flips per
-# boot, so a boot where it works proves nothing.
-#
-# The producer of the wrong value has not been identified (PackageManagerService
-# is the only writer in the tree and it writes ps.appId, which is the full uid),
-# so this repairs the result rather than the cause. Writing the *correct* value
-# takes effect immediately: the kernel skips an equal-value write, which is why
-# PackageManager re-asserting its own value never fixes anything, but a different
-# value updates the hash and re-derives the tree.
-#
-# Runs once at boot_completed. An app installed later keeps the wrong value until
-# the next boot.
-sdcardfs_appid_fix() {
-	LIST=/data/system/packages.list
-	CFG=/config/sdcardfs
-	[ -r "$LIST" ] && [ -d "$CFG" ] || return 0
-
-	FIXED=0
-	while read -r PKG UID REST; do
-		[ -n "$PKG" ] && [ -n "$UID" ] || continue
-		case "$UID" in ''|*[!0-9]*) continue ;; esac
-		F="$CFG/$PKG/appid"
-		[ -f "$F" ] || continue
-		CUR="$(cat "$F" 2>/dev/null)"
-		[ "$CUR" = "$UID" ] && continue
-		echo "$UID" > "$F" 2>/dev/null
-		FIXED=$((FIXED + 1))
-	done < "$LIST"
-
-	[ "$FIXED" -gt 0 ] && xlog "sdcardfs appid repaired for $FIXED package(s)"
-	return 0
-}
-
-# One repair pass at boot_completed is not enough: something rewrites the wrong
-# values roughly 15 s later (measured 2026-08-01 - correct at boot_completed+4 s,
-# wrong again by +20 s, then stable). The producer is unidentified, so watch a
-# canary package for a bounded window and repair again whenever it goes wrong.
-# Nothing rewrites it after the boot window, so the watch ends rather than
-# running forever. persist.sys.xdplus.appidfix=0 disables the whole thing.
-sdcardfs_appid_watch() {
-	[ "$(getprop persist.sys.xdplus.appidfix)" = "0" ] && return 0
-
-	CANARY_PKG=""
-	CANARY_UID=""
-	while read -r PKG UID REST; do
-		[ -f "/config/sdcardfs/$PKG/appid" ] || continue
-		case "$UID" in ''|*[!0-9]*) continue ;; esac
-		CANARY_PKG="$PKG"; CANARY_UID="$UID"
-		break
-	done < /data/system/packages.list
-
-	sdcardfs_appid_fix
-	[ -n "$CANARY_PKG" ] || return 0
-
-	i=0
-	while [ "$i" -lt 40 ]; do
-		sleep 3
-		i=$((i + 1))
-		[ "$(cat "/config/sdcardfs/$CANARY_PKG/appid" 2>/dev/null)" = "$CANARY_UID" ] && continue
-		xlog "sdcardfs appid reverted (canary $CANARY_PKG), repairing again"
-		sdcardfs_appid_fix
-	done
-}
-
 vkcache_prune() {
 	DIR=/data/vkshim
 	[ -d "$DIR" ] || return 0
@@ -280,7 +209,7 @@ case "$CMD" in
 	# KNOWN-BAD: it unfreezes nothing and makes any freeze sticky across
 	# reboots), so the only work here is holding the shader-cache directory
 	# under budget — the one place that can, now that the directory is sticky.
-	boot)      vkcache_prune; sdcardfs_appid_watch ;;
+	boot)      vkcache_prune ;;
 	vkcache_prune) vkcache_prune ;;
 	vkcache_clear) vkcache_clear ;;
 	# Compile-progress relay: exits quietly, and must NOT clear sys.xdplus.action
