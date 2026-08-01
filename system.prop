@@ -93,8 +93,12 @@ persist.sys.wifi_ps_pin_off=1
 # is set. Cosmetic (correct UI badge); unset = stock UNKNOWN behavior.
 persist.sys.wifi_standard_11n_fallback=1
 
-# Flutter Impeller crashes in native code on PowerVR GX6250 DDK 1.9.
+# Flutter Impeller crashes on this device: the engine falls back off Vulkan on
+# its own, then Impeller GL-ES fails to choose an offscreen EGL config and
+# dereferences the null context ("Could not choose offscreen config", SIGSEGV
+# at 0x18 on the 1.raster thread). Measured identical with Vulkan allowed and
+# denied, so this is a GL-path failure, not a Vulkan one.
 # Patch 0027 injects io.flutter.embedding.android.EnableImpeller=false for these
-# packages via PackageManagerService, forcing the stable Skia/OpenGL backend.
+# packages via PackageManagerService, forcing the Skia backend instead.
 # No APK modification needed; Vulkan games remain untouched.
 persist.sys.xdplus.flutter_disable_impeller=dev.imranr.obtainium,dev.bikram.obtainx
