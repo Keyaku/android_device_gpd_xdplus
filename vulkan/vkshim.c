@@ -245,6 +245,22 @@ static const char *pkg_name(void) {
 	return pkg;
 }
 
+// prop_on() below defaults to ON when the property is unset — right for the
+// fixes that should always be active. This one is the opposite: OFF unless
+// explicitly set to 1, for behaviour that must be opted into rather than
+// shipped hot. Defined up here because compile_batch() needs it.
+static int real_override = -1;
+static int cache_harvest = -1;
+
+static int prop_explicit_on(const char *name, int *cache) {
+	if (*cache < 0) {
+		char v[PROP_VALUE_MAX] = {0};
+		__system_property_get(name, v);
+		*cache = v[0] == '1' ? 1 : 0;
+	}
+	return *cache;
+}
+
 static size_t cap_bytes(const char *name, unsigned def_mb) {
 	char v[PROP_VALUE_MAX] = {0};
 	char prop[96];
@@ -472,11 +488,30 @@ static VkResult compile_batch(void *(*fn)(void *), void *args, VkResult *slot,
 	if (slow_session) publish_progress();
 
 	if (own_master) {
+		// NOTE: app_cache is VK_NULL_HANDLE here by construction — own_master is
+		// only set on that path. An earlier version merged app_cache in right
+		// here, which was dead code and hid the gap handled below.
 		master_in_use = 0;
-		if (app_cache != VK_NULL_HANDLE && real_mpc)
-			real_mpc(dev, shim_cache, 1, &app_cache);
 		drain_pending(dev);
 		save_disk_cache(dev, 0);
+	} else if (app_cache != VK_NULL_HANDLE) {
+		// The app brought its own cache, so the batch compiled into that and our
+		// persistent cache learned nothing. Measured live: SwanStation supplies a
+		// cache, so /data/vkshim/<pkg>.pcache stayed at its 36-byte empty header
+		// through two full compile storms and every launch paid full price.
+		//
+		// ⚠️ OFF by default (debug.xdplus.vkcacheharvest=1 to enable). Merging
+		// reads app_cache, which the spec requires not be concurrently modified,
+		// and we cannot prove the app is not compiling into it on another thread
+		// right now — only that *this* batch is done. Enabling it trades that
+		// risk for cross-run persistence; keep it opt-in until it has soaked.
+		if (prop_explicit_on("debug.xdplus.vkcacheharvest", &cache_harvest)
+				&& real_mpc && !master_in_use
+				&& disk_cache != VK_NULL_HANDLE && cache_dev == dev) {
+			real_mpc(dev, disk_cache, 1, &app_cache);
+			drain_pending(dev);
+			save_disk_cache(dev, 0);
+		}
 	} else if (scratch != VK_NULL_HANDLE) {
 		if (!master_in_use && real_mpc && disk_cache != VK_NULL_HANDLE
 				&& cache_dev == dev) {
@@ -1501,18 +1536,30 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetInstanceProcAddr(
 
 static int load_real(void) {
 	if (real_module) return 0;
-	// Prototype installs bind-mounted the shim over the vendor blob path, so a
-	// stashed copy is probed first; the tree install leaves the vendor path real.
+	// The vendor blob in the image is the driver. The /data/local/tmp copy is a
+	// development override from the prototype era, when installs bind-mounted the
+	// shim over the vendor path and the real blob had to be stashed elsewhere.
+	//
+	// ⚠️ That stash used to be probed FIRST, which meant a shipped build took its
+	// Vulkan driver from a directory any adb shell can write (/data/local/tmp is
+	// drwxrwx--x shell shell), and a stale A/B copy left there silently won over
+	// the image's own blob. The override is still available for A/B work, but it
+	// is now opt-in: set debug.xdplus.vkrealoverride=1.
 #ifdef __LP64__
-	const char *paths[] = {"/data/local/tmp/vulkan.mt8173.real.so",
-		"/vendor/lib64/hw/vulkan.mt8173.so"};
+	const char *vendor_path = "/vendor/lib64/hw/vulkan.mt8173.so";
+	const char *override_path = "/data/local/tmp/vulkan.mt8173.real.so";
 #else
-	const char *paths[] = {"/data/local/tmp/vulkan.mt8173.real32.so",
-		"/vendor/lib/hw/vulkan.mt8173.so"};
+	const char *vendor_path = "/vendor/lib/hw/vulkan.mt8173.so";
+	const char *override_path = "/data/local/tmp/vulkan.mt8173.real32.so";
 #endif
-	const char *path = paths[0];
-	void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-	if (!h) { path = paths[1]; h = dlopen(path, RTLD_NOW | RTLD_LOCAL); }
+	const char *path = vendor_path;
+	void *h = NULL;
+	if (prop_explicit_on("debug.xdplus.vkrealoverride", &real_override)) {
+		path = override_path;
+		h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+		if (h) LOGI("using override driver %s", path);
+	}
+	if (!h) { path = vendor_path; h = dlopen(path, RTLD_NOW | RTLD_LOCAL); }
 	if (!h) { LOGE("dlopen %s failed: %s", path, dlerror()); return -1; }
 	real_module = (hwvulkan_module_t *)dlsym(h, HAL_MODULE_INFO_SYM_AS_STR);
 	if (!real_module) { LOGE("no HMI in real blob"); return -1; }
