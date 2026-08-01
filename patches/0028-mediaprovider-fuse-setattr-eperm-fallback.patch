@@ -1,0 +1,58 @@
+From c762ef2620d749cc78192624df31b7075573878e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sat, 1 Aug 2026 15:38:47 +0100
+Subject: [PATCH] FuseDaemon: fall back to current-time setattr when explicit
+ times hit EPERM
+
+On public volumes (vfat/exfat) vold mounts the backing filesystem with a
+fixed owner uid (root), so the daemon has group write access but is not
+the file owner. With the writeback cache enabled the kernel flushes its
+cached mtime as a FUSE_SETATTR with explicit times before FLUSH/FSYNC,
+and explicit-time utimensat()/futimens() require ownership or
+CAP_FOWNER. The resulting EPERM is returned by the kernel from every
+close() and fsync() after a write, making apps believe their writes
+failed even though the data landed.
+
+Retry with NULL times, i.e. both timestamps set to the current time:
+the VFS waives the owner check only when every timestamp is UTIME_NOW
+(a partial UTIME_NOW/UTIME_OMIT mix is still owner-checked), and only
+write permission is then required. The timestamp flush immediately
+follows the write, so the resulting mtime is essentially correct, and
+these filesystems cannot represent per-file ownership anyway, so the
+EPERM is structural rather than a real denial.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: I37d1b2dd4a772182529afad0b4c90cf1a5e0673e
+---
+ jni/FuseDaemon.cpp | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/jni/FuseDaemon.cpp b/jni/FuseDaemon.cpp
+index 7dc629f..7f17048 100644
+--- a/jni/FuseDaemon.cpp
++++ b/jni/FuseDaemon.cpp
+@@ -706,6 +706,21 @@ static void pf_setattr(fuse_req_t req,
+             res = futimens(fd, times);
+         }
+ 
++        if (res < 0 && errno == EPERM) {
++            // Public volumes (vfat/exfat) are mounted with a fixed owner uid, so
++            // setting explicit timestamps fails the VFS owner check for the daemon
++            // even though it has write access. This turns every close()/fsync()
++            // into EPERM once the kernel flushes its writeback-cached mtime.
++            // Retry with NULL times (both set to now): the VFS only waives the
++            // owner check when every timestamp is UTIME_NOW, and the flush
++            // follows the write immediately, so "now" is accurate.
++            if (fd == -1) {
++                res = utimensat(-1, path.c_str(), nullptr, 0);
++            } else {
++                res = futimens(fd, nullptr);
++            }
++        }
++
+         if (res < 0) {
+             fuse_reply_err(req, errno);
+             return;
+-- 
+2.55.0
+
