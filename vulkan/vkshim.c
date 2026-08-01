@@ -144,16 +144,23 @@ struct img_info {
 static struct img_info img_table[IMG_TABLE_MAX];
 static pthread_mutex_t img_mu = PTHREAD_MUTEX_INITIALIZER;
 
-static struct img_info *find_img(VkImage img) {
+// Copies the entry out rather than returning a pointer into the table. The
+// table is a fixed array so a slot pointer cannot dangle, but it can be
+// recycled: a concurrent vkDestroyImage + vkCreateImage frees the slot and
+// refills it with a different image, and a caller still holding the pointer
+// would then size its scratch images from the wrong image's format and extent.
+static int find_img(VkImage img, struct img_info *out) {
+	int found = 0;
 	pthread_mutex_lock(&img_mu);
 	for (int i = 0; i < IMG_TABLE_MAX; i++) {
 		if (img_table[i].used && img_table[i].img == img) {
-			pthread_mutex_unlock(&img_mu);
-			return &img_table[i];
+			*out = img_table[i];
+			found = 1;
+			break;
 		}
 	}
 	pthread_mutex_unlock(&img_mu);
-	return NULL;
+	return found;
 }
 
 static void remember_img(VkImage img, VkFormat format, VkExtent3D extent,
@@ -224,6 +231,59 @@ static unsigned pending_count;
 static int warned_pending_full;
 static unsigned compiled_count;
 static int slow_session;
+
+// App-supplied caches with a batch currently compiling into them.
+//
+// vkCreatePipelines externally-synchronises its pipelineCache parameter, but
+// that is a contract between the app's own threads: nothing stops two of them
+// compiling into the same cache at once, and each is correct on its own terms.
+// Harvesting *reads* that cache (vkMergePipelineCaches names pSrcCaches as a
+// read), which the spec forbids while it is being written — the reason harvest
+// shipped opt-in. Counting in-flight batches per handle closes it: a harvest
+// runs only when this batch was the cache's last user, which is precisely the
+// state the app has already serialised for us.
+//
+// The other three ways an app touches a cache — merging into it, serialising
+// it, destroying it — are hooked below and take cache_mu, so the shim is the
+// serialisation point for all of them. What remains unguarded is an app that
+// creates a cache and never routes it through the loader's device dispatch,
+// which is not a thing an app can do.
+#define APP_CACHE_MAX 16
+static struct { VkPipelineCache pc; unsigned n; } app_inflight[APP_CACHE_MAX];
+static int warned_app_cache_full;
+
+// cache_mu held. Returns 0 when the handle is tracked, -1 when the table is
+// full — in which case the caller must not harvest, since it can no longer see
+// who else is using the cache.
+static int app_cache_ref(VkPipelineCache pc) {
+	for (int i = 0; i < APP_CACHE_MAX; i++)
+		if (app_inflight[i].pc == pc) { app_inflight[i].n++; return 0; }
+	for (int i = 0; i < APP_CACHE_MAX; i++)
+		if (app_inflight[i].pc == VK_NULL_HANDLE) {
+			app_inflight[i].pc = pc;
+			app_inflight[i].n = 1;
+			return 0;
+		}
+	if (!warned_app_cache_full) {
+		warned_app_cache_full = 1;
+		LOGI("app pipeline-cache table full, not harvesting while it stays full");
+	}
+	return -1;
+}
+
+// cache_mu held. Non-zero when this batch was the last in-flight user of pc,
+// i.e. when reading it is safe.
+static int app_cache_unref(VkPipelineCache pc) {
+	for (int i = 0; i < APP_CACHE_MAX; i++)
+		if (app_inflight[i].pc == pc) {
+			if (--app_inflight[i].n == 0) {
+				app_inflight[i].pc = VK_NULL_HANDLE;
+				return 1;
+			}
+			return 0;
+		}
+	return 0;
+}
 
 static unsigned long long now_ns(void) {
 	struct timespec ts;
@@ -455,9 +515,12 @@ static VkResult compile_batch(void *(*fn)(void *), void *args, VkResult *slot,
 	const VkPipelineCache app_cache = *cache_slot;
 	VkPipelineCache scratch = VK_NULL_HANDLE;
 	int own_master = 0;
+	int app_tracked = 0;
 
 	pthread_mutex_lock(&cache_mu);
 	VkPipelineCache shim_cache = ensure_disk_cache(dev);
+	if (app_cache != VK_NULL_HANDLE)
+		app_tracked = app_cache_ref(app_cache) == 0;
 	if (app_cache == VK_NULL_HANDLE && shim_cache != VK_NULL_HANDLE && !master_in_use) {
 		master_in_use = 1;
 		own_master = 1;
@@ -500,12 +563,14 @@ static VkResult compile_batch(void *(*fn)(void *), void *args, VkResult *slot,
 		// cache, so /data/vkshim/<pkg>.pcache stayed at its 36-byte empty header
 		// through two full compile storms and every launch paid full price.
 		//
-		// ⚠️ OFF by default (debug.xdplus.vkcacheharvest=1 to enable). Merging
-		// reads app_cache, which the spec requires not be concurrently modified,
-		// and we cannot prove the app is not compiling into it on another thread
-		// right now — only that *this* batch is done. Enabling it trades that
-		// risk for cross-run persistence; keep it opt-in until it has soaked.
-		if (prop_explicit_on("debug.xdplus.vkcacheharvest", &cache_harvest)
+		// ⚠️ Still OFF by default (debug.xdplus.vkcacheharvest=1 to enable) —
+		// unsoaked, not unsafe. The concurrency hole it was held back for is
+		// closed: `last_user` is set only when no other batch is compiling into
+		// app_cache, and the app's own merge/serialise/destroy of a cache now
+		// go through hooks that take cache_mu. See app_cache_ref.
+		int last_user = app_tracked ? app_cache_unref(app_cache) : 0;
+		if (last_user
+				&& prop_explicit_on("debug.xdplus.vkcacheharvest", &cache_harvest)
 				&& real_mpc && !master_in_use
 				&& disk_cache != VK_NULL_HANDLE && cache_dev == dev) {
 			real_mpc(dev, disk_cache, 1, &app_cache);
@@ -546,6 +611,46 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 	const VkAllocationCallbacks *ac, VkPipeline *out) {
 	struct cp_args a = {dev, cache, n, ci, ac, out, VK_ERROR_INITIALIZATION_FAILED};
 	return compile_batch(cp_thread, &a, &a.r, dev, &a.cache, n);
+}
+
+// The app's own operations on a pipeline cache, serialised against ours. Each
+// is a straight pass-through except for taking cache_mu, which is what makes
+// the harvest above safe: while the shim is reading an app cache, the app
+// cannot be merging into it, serialising it or destroying it. Without these the
+// spec's external-synchronisation requirement is unmeetable, because the app
+// has no way to know the shim is a second user of its cache.
+//
+// cache_mu is never held across a compile (see cache_mu), so these add no
+// contention to the path that ANR'd in §139 — only to the short bookkeeping.
+static VKAPI_ATTR VkResult VKAPI_CALL shim_MergePipelineCaches(
+	VkDevice dev, VkPipelineCache dst, uint32_t n, const VkPipelineCache *src) {
+	pthread_mutex_lock(&cache_mu);
+	VkResult r = real_mpc(dev, dst, n, src);
+	pthread_mutex_unlock(&cache_mu);
+	return r;
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_GetPipelineCacheData(
+	VkDevice dev, VkPipelineCache pc, size_t *size, void *data) {
+	pthread_mutex_lock(&cache_mu);
+	VkResult r = real_gpcd(dev, pc, size, data);
+	pthread_mutex_unlock(&cache_mu);
+	return r;
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_DestroyPipelineCache(
+	VkDevice dev, VkPipelineCache pc, const VkAllocationCallbacks *ac) {
+	pthread_mutex_lock(&cache_mu);
+	// Drop any tracking entry first: a handle the driver is about to free must
+	// never be left where a later batch could match it and harvest through it.
+	for (int i = 0; i < APP_CACHE_MAX; i++)
+		if (app_inflight[i].pc == pc) {
+			app_inflight[i].pc = VK_NULL_HANDLE;
+			app_inflight[i].n = 0;
+			break;
+		}
+	real_dpc(dev, pc, ac);
+	pthread_mutex_unlock(&cache_mu);
 }
 
 // ---- scratch-image helpers for mip blit emulation --------------------------
@@ -661,12 +766,22 @@ static uint32_t mip_ext(uint32_t base, uint32_t level) {
 	return v ? v : 1;
 }
 
-// Look up or allocate a scratch slot for this command buffer. Linear search is
-// fine: the number of in-flight mip blits in one command buffer is small.
-static struct scratch_pair *get_scratch_pair(VkDevice dev, VkCommandBuffer cb,
+// Look up or allocate a scratch slot for this command buffer, and copy the
+// resulting handles into *out. Linear search is fine: the number of in-flight
+// mip blits in one command buffer is small.
+//
+// ⚠️ scratch_mu is held across the allocation, and no pointer into the table is
+// ever returned. slot->pairs is a realloc'd array that clear_cb()/clear_pool()
+// free outright, so a pointer handed back after unlocking could be written
+// through after the array had moved or been freed — vkResetCommandPool on
+// another thread is enough. The allocation runs under the lock instead: it is a
+// handful of driver create/bind calls, nothing like a USC compile, and no
+// driver path re-enters scratch_mu.
+static int get_scratch_pair(VkDevice dev, VkCommandBuffer cb,
 	VkFormat format, uint32_t src_w, uint32_t src_h, uint32_t src_d,
 	uint32_t dst_w, uint32_t dst_h, uint32_t dst_d,
-	VkPhysicalDeviceMemoryProperties *props) {
+	VkPhysicalDeviceMemoryProperties *props, struct scratch_pair *out) {
+	struct scratch_pair pair = {0};
 	pthread_mutex_lock(&scratch_mu);
 	struct cb_scratch *slot = NULL;
 	for (int i = 0; i < CB_TABLE_MAX; i++) {
@@ -676,7 +791,7 @@ static struct scratch_pair *get_scratch_pair(VkDevice dev, VkCommandBuffer cb,
 	if (!slot) {
 		LOGE("out of command-buffer scratch slots");
 		pthread_mutex_unlock(&scratch_mu);
-		return NULL;
+		return -1;
 	}
 	if (slot->cb == VK_NULL_HANDLE) {
 		slot->cb = cb;
@@ -691,28 +806,29 @@ static struct scratch_pair *get_scratch_pair(VkDevice dev, VkCommandBuffer cb,
 		if (!new_pairs) {
 			LOGE("realloc scratch pair list failed");
 			pthread_mutex_unlock(&scratch_mu);
-			return NULL;
+			return -1;
 		}
 		memset(new_pairs + slot->cap, 0,
 			(new_cap - slot->cap) * sizeof(*slot->pairs));
 		slot->pairs = new_pairs;
 		slot->cap = new_cap;
 	}
-	struct scratch_pair *p = &slot->pairs[slot->count++];
-	pthread_mutex_unlock(&scratch_mu);
 	if (alloc_scratch_image(dev, format, src_w, src_h, src_d,
 			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-			props, &p->src_img, &p->src_mem) != 0 ||
+			props, &pair.src_img, &pair.src_mem) != 0 ||
 	    alloc_scratch_image(dev, format, dst_w, dst_h, dst_d,
 			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-			props, &p->dst_img, &p->dst_mem) != 0) {
-		free_scratch_pair(dev, p);
-		pthread_mutex_lock(&scratch_mu);
-		slot->count--;
+			props, &pair.dst_img, &pair.dst_mem) != 0) {
+		free_scratch_pair(dev, &pair);
 		pthread_mutex_unlock(&scratch_mu);
-		return NULL;
+		return -1;
 	}
-	return p;
+	// Commit only once both images exist, so a failed allocation leaves no
+	// half-built entry for the teardown paths to walk.
+	slot->pairs[slot->count++] = pair;
+	pthread_mutex_unlock(&scratch_mu);
+	*out = pair;
+	return 0;
 }
 
 static void free_cb_scratch_images(VkDevice dev, struct cb_scratch *slot) {
@@ -934,8 +1050,16 @@ static void emit_emulated_blit(VkCommandBuffer cb, VkDevice dev,
 	uint32_t layers = region->srcSubresource.layerCount;
 	if (!layers) layers = 1;
 
-	struct scratch_pair *p = get_scratch_pair(dev, cb, fmt, src_w, src_h, src_d, dst_w, dst_h, dst_d, &mem_props);
-	if (!p) { LOGE("scratch alloc failed, dropping mip blit"); return; }
+	// A copy of the table entry, not a pointer into it — see get_scratch_pair.
+	// The images stay owned by the table and are destroyed with the command
+	// buffer; this is only the handles used to record the commands below.
+	struct scratch_pair pair;
+	if (get_scratch_pair(dev, cb, fmt, src_w, src_h, src_d, dst_w, dst_h, dst_d,
+			&mem_props, &pair) != 0) {
+		LOGE("scratch alloc failed, dropping mip blit");
+		return;
+	}
+	struct scratch_pair *p = &pair;
 
 	// Source mip -> scratch_src level 0, if needed.
 	if (src_mip != 0) {
@@ -1055,20 +1179,19 @@ static VKAPI_ATTR void VKAPI_CALL shim_CmdBlitImage(
 		return;
 	}
 
-	struct img_info *src_info = find_img(src);
-	struct img_info *dst_info = find_img(dst);
-	if (!src_info || !dst_info) {
+	struct img_info src_info, dst_info;
+	if (!find_img(src, &src_info) || !find_img(dst, &dst_info)) {
 		LOGE("mip blit: missing image metadata (src=%p dst=%p), dropping", (void*)(uintptr_t)src, (void*)(uintptr_t)dst);
 		return;
 	}
-	if (format_is_depth_stencil(src_info->format)) {
+	if (format_is_depth_stencil(src_info.format)) {
 		LOGE("mip blit: depth/stencil format not emulated, dropping");
 		return;
 	}
 
 	for (uint32_t i = 0; i < n; i++)
 		emit_emulated_blit(cb, dev, src, src_layout, dst, dst_layout,
-			&regions[i], filter, src_info, dst_info);
+			&regions[i], filter, &src_info, &dst_info);
 }
 
 // Since no generated mip chain can be trusted, keep samplers on level 0. The
@@ -1407,6 +1530,18 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
 	if (!strcmp(name, "vkDestroyDevice")) {
 		if (!real_dd) real_dd = (PFN_vkDestroyDevice)real_gdpa(dev, name);
 		return real_dd ? (PFN_vkVoidFunction)shim_DestroyDevice : NULL;
+	}
+	if (!strcmp(name, "vkMergePipelineCaches")) {
+		if (!real_mpc) real_mpc = (PFN_vkMergePipelineCaches)real_gdpa(dev, name);
+		return real_mpc ? (PFN_vkVoidFunction)shim_MergePipelineCaches : NULL;
+	}
+	if (!strcmp(name, "vkGetPipelineCacheData")) {
+		if (!real_gpcd) real_gpcd = (PFN_vkGetPipelineCacheData)real_gdpa(dev, name);
+		return real_gpcd ? (PFN_vkVoidFunction)shim_GetPipelineCacheData : NULL;
+	}
+	if (!strcmp(name, "vkDestroyPipelineCache")) {
+		if (!real_dpc) real_dpc = (PFN_vkDestroyPipelineCache)real_gdpa(dev, name);
+		return real_dpc ? (PFN_vkVoidFunction)shim_DestroyPipelineCache : NULL;
 	}
 	if (!strcmp(name, "vkCmdBlitImage")) {
 		if (!real_cbi) real_cbi = (PFN_vkCmdBlitImage)real_gdpa(dev, name);
