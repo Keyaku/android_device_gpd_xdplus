@@ -1263,48 +1263,73 @@ static unsigned null_fb_hits;
 // in flight are few, and a miss is harmless (the command goes through, which is
 // the pre-guard behaviour). Overflow degrades to that same behaviour rather
 // than growing unboundedly.
-// ⚠️ supp_active() sits on the hot path — it runs on every draw. Suppression is
-// rare (one pass per frame, and none at all in a healthy session), so the
-// common case must not take a lock: a relaxed load of the active count exits
-// immediately when nothing is suppressed. The lock is only paid while a
-// suppressed pass is actually open. Do not "simplify" this back to an
-// unconditional lock; thousands of draws per frame each taking a mutex is a
-// measurable cost for a guard that almost never fires.
+// ⚠️ supp_active() sits on the hot path — it runs on every draw, and the
+// assumption it was originally built on is WRONG for the app that needs it.
+//
+// The first version kept a mutex here, justified by "suppression is rare (one
+// pass per frame, and none at all in a healthy session)", with an atomic count
+// as a fast path so the lock was only paid while a suppressed pass was open.
+// Measured live on PPSSPP at 3x internal resolution: the guard fires
+// **continuously, 7-13 times a second on the same VkRenderPass handle** — 1536
+// suppressions inside one short session. A suppressed pass is therefore open
+// for much of the time, the count fast-path exits almost never, and every draw
+// call in the app's heaviest workload was taking a contended mutex. That is the
+// opposite of the design intent, in exactly the case that matters.
+//
+// So the whole thing is lock-free now: the slots are plain pointers accessed
+// with atomics, claimed and released by compare-exchange. A draw costs an
+// atomic load of the count, one load of the `last` hint (which hits for the
+// single-suppressed-buffer case that PPSSPP actually produces), and at worst a
+// scan of 16 atomic loads — no mutex, no futex, no cross-thread contention.
+//
+// Semantics are unchanged, including the sloppy edges, which were always
+// sloppy: a racing reader may miss a set that is in flight, in which case the
+// command goes through, which is the pre-guard behaviour. Table overflow
+// degrades to that same behaviour rather than growing unboundedly.
 #define SUPP_MAX 16
 static VkCommandBuffer supp_cb[SUPP_MAX];
-static pthread_mutex_t supp_mu = PTHREAD_MUTEX_INITIALIZER;
+static VkCommandBuffer supp_last;   // hint: the most recently suppressed buffer
 static int supp_n;
 
 static void supp_set(VkCommandBuffer cb) {
-	pthread_mutex_lock(&supp_mu);
-	for (int i = 0; i < SUPP_MAX; i++)
-		if (!supp_cb[i]) {
-			supp_cb[i] = cb;
+	for (int i = 0; i < SUPP_MAX; i++) {
+		VkCommandBuffer expect = VK_NULL_HANDLE;
+		if (__atomic_compare_exchange_n(&supp_cb[i], &expect, cb, 0,
+				__ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+			__atomic_store_n(&supp_last, cb, __ATOMIC_RELEASE);
 			__atomic_add_fetch(&supp_n, 1, __ATOMIC_RELEASE);
-			break;
+			return;
 		}
-	pthread_mutex_unlock(&supp_mu);
+	}
+	// Table full: leave it unsuppressed rather than evicting someone else's
+	// entry — a command that gets through is the pre-guard behaviour.
 }
 
 static int supp_active(VkCommandBuffer cb) {
 	if (__atomic_load_n(&supp_n, __ATOMIC_ACQUIRE) == 0) return 0;
-	int hit = 0;
-	pthread_mutex_lock(&supp_mu);
+	// cb is never null in practice; checking keeps a null from matching an
+	// empty slot in the scan below.
+	if (cb == VK_NULL_HANDLE) return 0;
+	if (__atomic_load_n(&supp_last, __ATOMIC_ACQUIRE) == cb) return 1;
 	for (int i = 0; i < SUPP_MAX; i++)
-		if (supp_cb[i] == cb) { hit = 1; break; }
-	pthread_mutex_unlock(&supp_mu);
-	return hit;
+		if (__atomic_load_n(&supp_cb[i], __ATOMIC_ACQUIRE) == cb) return 1;
+	return 0;
 }
 
 static void supp_clear(VkCommandBuffer cb) {
-	pthread_mutex_lock(&supp_mu);
-	for (int i = 0; i < SUPP_MAX; i++)
-		if (supp_cb[i] == cb) {
-			supp_cb[i] = NULL;
+	for (int i = 0; i < SUPP_MAX; i++) {
+		VkCommandBuffer expect = cb;
+		if (__atomic_compare_exchange_n(&supp_cb[i], &expect, VK_NULL_HANDLE, 0,
+				__ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+			// Retire the hint with the entry, so a cleared buffer cannot keep
+			// matching it after its slot is free.
+			VkCommandBuffer h = cb;
+			__atomic_compare_exchange_n(&supp_last, &h, VK_NULL_HANDLE, 0,
+				__ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
 			__atomic_sub_fetch(&supp_n, 1, __ATOMIC_RELEASE);
-			break;
+			return;
 		}
-	pthread_mutex_unlock(&supp_mu);
+	}
 }
 
 static VKAPI_ATTR void VKAPI_CALL shim_CmdBeginRenderPass(
