@@ -924,6 +924,14 @@ static void remember_pool(VkDevice dev, VkCommandBuffer cb, VkCommandPool pool) 
 //                      the blit is a silent no-op — nothing is written, and it
 //                      does not fall back to reading level 0 either.
 //
+// ⚠️ That last row describes the *blob*. Do not re-measure it with vksrcmip and
+// conclude the same thing about this shim: with the emulation on, a non-zero
+// source level is read correctly (the probe reports slope 8.00, i.e. level 1
+// and not a fallback to level 0). The probe reported "NOTHING READ" for a while
+// after the emulation landed, which looked like confirmation of the row above
+// and was really this file staging the result into a scratch image it then
+// never copied out whenever the destination was level 0.
+//
 // No error in any case, and the format advertises BLIT_SRC and BLIT_DST.
 //
 // vkCmdCopyImage, by contrast, honours mip levels correctly on both sides
@@ -938,10 +946,11 @@ static void remember_pool(VkDevice dev, VkCommandBuffer cb, VkCommandPool pool) 
 // half-size copy left behind by the chain (each icon drawn twice, one small,
 // one full size).
 //
-// Until the scratch-and-copy emulation is implemented here, the rule is: drop
-// any blit that names a non-zero mip level on either side, and keep samplers on
-// level 0 because no chain gets generated. Level-0 blits — including scaling
-// ones — go straight through, since they are correct.
+// The scratch-and-copy emulation is implemented below, so mip-level blits are
+// served rather than dropped; dropping them is what `vkblitmip=0` reverts to.
+// Level-0 blits — including scaling ones — go straight through, since they are
+// correct. Samplers are still clamped by default, which is now a policy choice
+// rather than a necessity: real chains are generated, and `vkmiplod=0` uses them.
 //  - debug.xdplus.vkmiplod=0 stops clamping samplers to level 0.
 //  - debug.xdplus.vkblitmip=0 disables the emulation and drops mip-level
 //    blits (the old behaviour).
