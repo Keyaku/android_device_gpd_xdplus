@@ -1095,23 +1095,37 @@ static void emit_emulated_blit(VkCommandBuffer cb, VkDevice dev,
 			VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
 	}
 
-	// Intermediate level-0 blit: scratch_src (or real src if src_mip==0) -> scratch_dst.
-	record_image_barrier(cb, p->dst_img, VK_IMAGE_LAYOUT_UNDEFINED,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+	// Intermediate blit: scratch_src (or the real src if src_mip==0) -> scratch_dst.
+	//
+	// ⚠️ When the destination is already level 0 there is nothing to stage: the
+	// blit goes straight into the real image. Routing it through scratch_dst
+	// anyway wrote the result into a scratch nothing ever read, because the
+	// copy-out below only runs for a non-zero destination level — so a blit that
+	// merely read a non-zero *source* mip silently produced nothing. That is what
+	// tools/vkmip vksrcmip reports as "NOTHING READ", and it looked like the
+	// blob's own defect rather than the emulation dropping the result.
+	VkImage mid_dst = (dst_mip == 0) ? dst : p->dst_img;
+	VkImageLayout mid_dst_layout = (dst_mip == 0)
+		? dst_layout : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	if (dst_mip != 0)
+		record_image_barrier(cb, p->dst_img, VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
 	VkImageBlit mid = *region;
 	mid.srcSubresource.mipLevel = 0;
-	mid.srcSubresource.baseArrayLayer = 0;
 	mid.dstSubresource.mipLevel = 0;
-	mid.dstSubresource.baseArrayLayer = 0;
 	VkImage mid_src = (src_mip == 0) ? src : p->src_img;
 	VkImageLayout mid_src_layout = (src_mip == 0) ? src_layout : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-	real_cbi(cb, mid_src, mid_src_layout, p->dst_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &mid, filter);
+	// Scratch images are single-layer, so an endpoint that was staged addresses
+	// layer 0; one that goes straight through keeps the layer the app asked for.
+	if (src_mip != 0) mid.srcSubresource.baseArrayLayer = 0;
+	if (dst_mip != 0) mid.dstSubresource.baseArrayLayer = 0;
+	real_cbi(cb, mid_src, mid_src_layout, mid_dst, mid_dst_layout, 1, &mid, filter);
 
-	// scratch_dst level 0 -> real dst mip, if needed.
-	record_image_barrier(cb, p->dst_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-		VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+	// scratch_dst level 0 -> real dst mip, if it was staged.
 	if (dst_mip != 0) {
+		record_image_barrier(cb, p->dst_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
 		VkImageCopy copy_dst = {
 			.srcSubresource = {
 				.aspectMask = region->dstSubresource.aspectMask,
