@@ -24,9 +24,20 @@ TARGET_IS_64_BIT := true
 # Kernel
 BOARD_KERNEL_BASE := 0x40000000
 BOARD_KERNEL_OFFSET := 0x00080000
-# loglevel=7 + androidboot.hardware=mt8173 match the shipped boot.img; hardware=
-# is required for first-stage init to find /fstab.mt8173 in the ramdisk (no DT fstab).
-BOARD_KERNEL_CMDLINE := loglevel=7 bootopt=64S3,32N2,64N2 androidboot.selinux=permissive androidboot.hardware=mt8173
+# LK truncates the combined cmdline at ~237 chars and prepends its own, leaving
+# only ~99 for ours, so anything appended past that is silently dropped. Keep this
+# short and put load-bearing parameters first.
+#
+# androidboot.selinux= and androidboot.hardware= are deliberately NOT set here:
+# LK already supplies both, so setting them again only spends the budget twice.
+# Verified on three boots with them absent -- getenforce reports Permissive and
+# ro.boot.hardware reads mt8173, and first-stage init still finds /fstab.mt8173.
+#
+# log_buf_len is not a debugging luxury on this device. The default 512 KB ring
+# (CONFIG_LOG_BUF_SHIFT=19) wraps in about 12 SECONDS under a Vulkan gameplay
+# workload, which repeatedly destroyed the evidence for a kernel bug before it
+# could be read. 8 MB covers a whole boot; it costs 8 MB of RAM out of 4 GB.
+BOARD_KERNEL_CMDLINE := log_buf_len=8M loglevel=7 bootopt=64S3,32N2,64N2
 BOARD_KERNEL_IMAGE_NAME := Image.gz-dtb
 BOARD_KERNEL_PAGESIZE := 2048
 # Offsets from the shipped boot.img header (ramdisk @0x55000000, tags @0x54000000,
