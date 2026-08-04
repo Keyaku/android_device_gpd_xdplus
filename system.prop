@@ -100,11 +100,11 @@ persist.sys.flat_rotation=1
 # when this is set; init.xdplus.rc covers the raw driver default at load time.
 persist.sys.wifi_ps_pin_off=1
 
-# MT6630 gen2 HAL never reports the negotiated PHY mode, so WifiInfo standard
-# stays UNKNOWN on every connection. Chip is HT-only on this board (5 GHz/VHT
-# eFuse-gated, A/B-proven), so patch 0013 labels the standard 802.11n when this
-# is set. Cosmetic (correct UI badge); unset = stock UNKNOWN behavior.
-persist.sys.wifi_standard_11n_fallback=1
+# (The MT6630 PHY-mode label fix is unconditional in patch 0013 and needs no
+# property. It used to be gated on persist.sys.wifi_standard_11n_fallback,
+# which only chose between a correct badge and a wrong one. The comment that
+# lived here also claimed the chip was HT-only, which is false: 5 GHz VHT80 was
+# later measured working, and the patch labels by band.)
 
 # Flutter Impeller crashes on this device: the engine falls back off Vulkan on
 # its own, then Impeller GL-ES fails to choose an offscreen EGL config and
