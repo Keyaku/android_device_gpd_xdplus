@@ -116,13 +116,15 @@ PRODUCT_PACKAGES += healthd
 # never coexists with the charger-mode healthd above.
 PRODUCT_PACKAGES += android.hardware.health@2.1-service.xdplus
 
-# LAN OTA trust anchor. The Updater talks HTTPS
-# to the LAN box (ota.example.com:1443); its server cert is issued by our own CA
-# (scripts/ota_ca_setup.sh). Bake the CA's PUBLIC cert into the system trust
-# store so the device validates that TLS with no cleartext exception. Wildcard =
-# auto-pick whatever <subject_hash_old>.0 the setup script drops in ota/cacerts/
-# (empty + harmless until it's run).
-PRODUCT_COPY_FILES += $(foreach c,$(wildcard device/gpd/xdplus/ota/cacerts/*.0),$(c):$(TARGET_COPY_OUT_SYSTEM)/etc/security/cacerts/$(notdir $(c)))
+# No custom OTA trust anchor is installed. Update payloads are served over
+# HTTPS with a publicly-trusted certificate, so the stock system trust store
+# is sufficient and nothing device-specific is baked in.
+#
+# A private-CA variant previously lived here as a wildcard PRODUCT_COPY_FILES
+# over a cacerts directory. It was removed rather than left inert: a wildcard
+# that matches nothing copies nothing SILENTLY and the build still succeeds,
+# so it read as working for as long as it existed. If a custom anchor is ever
+# genuinely needed, add it explicitly and verify the file lands on the device.
 
 # System_ext keymaster + gatekeeper (see keymaster/Android.bp).
 # - keymaster@3.0-service.xdplus: binderized, TEE-backed (wraps trustlet HAL

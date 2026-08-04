@@ -77,10 +77,23 @@ ril.radiooff.poweroffMD=0
 
 persist.sys.flat_rotation=1
 
-# LAN OTA server for the LineageOS Updater.
-# HTTPS on a dedicated non-443 port; server cert issued by our CA baked into the
-# system trust store (xdplus.mk). App substitutes {device}/{type}/{incr}.
-lineage.updater.uri=https://ota.example.com:1443/api/v1/{device}/{type}/{incr}
+# OTA manifest URI for the LineageOS Updater — intentionally unset.
+#
+# Payloads are published as release assets on a public repository, and the
+# manifest is fetched as a static file over HTTPS with a publicly-trusted
+# certificate, so nothing needs baking into the system trust store.
+#
+# The Updater builds its request with a plain string replace of {device},
+# {type} and {incr}, so those placeholders are OPTIONAL: a literal URL is
+# fetched verbatim, which is what a static host wants. Set this to the raw
+# manifest URL once the hosting repository is decided:
+#
+#   lineage.updater.uri=https://raw.githubusercontent.com/<owner>/<repo>/<branch>/ota/xdplus.json
+#
+# Left unset deliberately: with no override the Updater falls back to the
+# upstream LineageOS endpoint, which has nothing for this device and simply
+# reports no updates. That is preferable to shipping an endpoint that does
+# not answer.
 
 # MTK gen2 driver mishandles 802.11 power-save: APs low-ack-kick the device
 # mid-transfer. Patch 0011 pins framework power-save off
