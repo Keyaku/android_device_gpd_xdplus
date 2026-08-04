@@ -1,18 +1,24 @@
 diff --git a/service/java/com/android/server/wifi/ClientModeImpl.java b/service/java/com/android/server/wifi/ClientModeImpl.java
 --- a/service/java/com/android/server/wifi/ClientModeImpl.java
 +++ b/service/java/com/android/server/wifi/ClientModeImpl.java
-@@ -2692,7 +2692,18 @@ public class ClientModeImpl extends StateMachine {
+@@ -2699,7 +2699,24 @@ public class ClientModeImpl extends StateMachine {
          ThroughputPredictor throughputPredictor = mWifiInjector.getThroughputPredictor();
          int maxTxLinkSpeedMbps = throughputPredictor.predictMaxTxThroughput(capabilities);
          int maxRxLinkSpeedMbps = throughputPredictor.predictMaxRxThroughput(capabilities);
 -        mWifiInfo.setWifiStandard(capabilities.wifiStandard);
 +        int wifiStandard = capabilities.wifiStandard;
-+        if (wifiStandard == ScanResult.WIFI_STANDARD_UNKNOWN
-+                && SystemProperties.getBoolean("persist.sys.wifi_standard_11n_fallback", false)) {
++        if (wifiStandard == ScanResult.WIFI_STANDARD_UNKNOWN) {
 +            // The MT6630 gen2 HAL never reports the negotiated PHY mode, leaving
 +            // WifiInfo standard = UNKNOWN even on a live link. The FULLMAC
 +            // firmware negotiates VHT on 5 GHz (verified: VHT80 MCS9, 433 Mbit/s
 +            // @5805 MHz) while 2.4 GHz links are HT-only, so label by band.
++            //
++            // Unconditional: this is a fact about the chip, not a preference.
++            // It was briefly gated on persist.sys.wifi_standard_11n_fallback and
++            // exposed as a toggle, which only offered a choice between a correct
++            // label and a wrong one. The guard stays narrow instead — it fires
++            // solely when the HAL reported nothing, so a HAL that ever starts
++            // reporting the real standard silently wins.
 +            wifiStandard = mWifiInfo.getFrequency() > 5000
 +                    ? ScanResult.WIFI_STANDARD_11AC
 +                    : ScanResult.WIFI_STANDARD_11N;
