@@ -77,23 +77,20 @@ ril.radiooff.poweroffMD=0
 
 persist.sys.flat_rotation=1
 
-# OTA manifest URI for the LineageOS Updater — intentionally unset.
+# OTA manifest URI for the LineageOS Updater.
 #
-# Payloads are published as release assets on a public repository, and the
-# manifest is fetched as a static file over HTTPS with a publicly-trusted
-# certificate, so nothing needs baking into the system trust store.
+# Payloads are published as release assets on the public umbrella repository,
+# and the manifest is fetched as a static file over HTTPS with a publicly
+# trusted certificate, so nothing needs baking into the system trust store.
 #
 # The Updater builds its request with a plain string replace of {device},
 # {type} and {incr}, so those placeholders are OPTIONAL: a literal URL is
-# fetched verbatim, which is what a static host wants. Set this to the raw
-# manifest URL once the hosting repository is decided:
+# fetched verbatim, which is what a static host wants.
 #
-#   lineage.updater.uri=https://raw.githubusercontent.com/<owner>/<repo>/<branch>/ota/xdplus.json
-#
-# Left unset deliberately: with no override the Updater falls back to the
-# upstream LineageOS endpoint, which has nothing for this device and simply
-# reports no updates. That is preferable to shipping an endpoint that does
-# not answer.
+# The repository must stay public. Both this manifest and the release asset it
+# points at are fetched anonymously, and a token must never appear here — this
+# file ships inside system.img and would be readable on every device.
+lineage.updater.uri=https://raw.githubusercontent.com/Keyaku/gpd-xdplus-customrom/main/ota/xdplus.json
 
 # MTK gen2 driver mishandles 802.11 power-save: APs low-ack-kick the device
 # mid-transfer. Patch 0011 pins framework power-save off
