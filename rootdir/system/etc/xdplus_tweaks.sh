@@ -193,6 +193,32 @@ vkcache_clear() {
 
 CMD="$1"
 
+# Retired toggles: clear properties whose Settings entry no longer exists.
+#
+# Removing a toggle from the menu does NOT clear what it already wrote. A
+# `persist.` value set by an older build survives the flash and stays set
+# forever, so a device that once had a toggle keeps behaving as if it were on
+# while the UI shows nothing — invisible state that silently invalidates any
+# later A/B. Clearing is one-way and cheap: nothing reads these any more.
+#
+#  hdmi_unfreeze   KNOWN-BAD (debug.hwc.is_skip_validate). It unfreezes nothing
+#                  and makes a freeze sticky across teardown, a composer restart
+#                  and a full reboot. Shipped default-on once; must not linger.
+#  wifi_standard_11n_fallback  the PHY-mode label fix is unconditional now.
+#
+# ⚠️ Append to this list whenever a toggle is retired; do not repurpose a name.
+prune_retired_props() {
+	for p in \
+		persist.sys.xdplus.hdmi_unfreeze \
+		persist.sys.wifi_standard_11n_fallback
+	do
+		if [ -n "$(getprop $p)" ]; then
+			xlog "clearing retired property $p"
+			setprop "$p" ""
+		fi
+	done
+}
+
 # Guard: the SurfaceFlinger-poking paths must never run before the framework is
 # fully up. init also gates the triggers on sys.boot_completed, but a manual/
 # early invocation must be a no-op too.
@@ -205,11 +231,10 @@ fi
 case "$CMD" in
 	hdmi_up)   hdmi_up ;;
 	hdmi_down) hdmi_down ;;
-	# Boot path: the un-freeze toggle was removed (is_skip_validate was
-	# KNOWN-BAD: it unfreezes nothing and makes any freeze sticky across
-	# reboots), so the only work here is holding the shader-cache directory
-	# under budget — the one place that can, now that the directory is sticky.
-	boot)      vkcache_prune ;;
+	# Boot path: hold the shader-cache directory under budget — the one place
+	# that can, now that the directory is sticky — and retire properties whose
+	# toggles no longer exist.
+	boot)      prune_retired_props; vkcache_prune ;;
 	vkcache_prune) vkcache_prune ;;
 	vkcache_clear) vkcache_clear ;;
 	# Compile-progress relay: exits quietly, and must NOT clear sys.xdplus.action
