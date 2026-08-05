@@ -1,0 +1,15 @@
+# Event-driven mini-HDMI plug/unplug watcher. Sleeps on the uevent netlink
+# socket, so it costs no wakeups while idle.
+#
+# Started from sys.boot_completed rather than as a normal class main service:
+# the bring-up protocol it runs latches debug.hwc.* properties through a
+# dumpsys, so SurfaceFlinger has to be up before the first cable event is
+# handled. Not oneshot -- init should bring it back if it ever dies.
+service xdplus-hdmid /system/bin/xdplus_hdmid
+    class late_start
+    user root
+    group root system graphics input
+    disabled
+
+on property:sys.boot_completed=1
+    start xdplus-hdmid

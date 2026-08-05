@@ -162,6 +162,12 @@ PRODUCT_PACKAGES += vulkan.mt8173
 # no longer depend on an artifact hand-pushed to /data/local/tmp.
 PRODUCT_PACKAGES += hdmictl
 
+# Event-driven HDMI plug/unplug watcher (see hdmi/Android.mk). Brings the
+# mirror up and down automatically on a cable transition by running the same
+# xdplus_tweaks.sh actions the Settings buttons use. Sleeps on the uevent
+# netlink socket, so unlike a shell poll loop it costs no wakeups while idle.
+PRODUCT_PACKAGES += xdplus_hdmid
+
 # Old HIDL libs the vendor audio HAL links against (not installed by default in R)
 PRODUCT_PACKAGES += android.hardware.soundtrigger@2.0 android.hardware.audio.common@2.0-util libaudioroute libaudiospdif
 
