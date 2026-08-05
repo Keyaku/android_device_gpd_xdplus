@@ -31,6 +31,10 @@ xlog() { /system/bin/log -t xdplus_tweaks "$*" 2>/dev/null; echo "xdplus_tweaks:
 # which forced the external display onto GPU CLIENT composition and left the
 # panel frozen while mirroring.
 #
+# On kernels with the survive-blank fix, the mirror path is kept alive through
+# a device screen-off/screen-on cycle; on older kernels the path is torn down
+# by the blank and must be brought up again afterwards.
+#
 # Preconditions, all discovered the hard way:
 #  - persist.sys.xdplus.hdmi_force_validate must have been 0 AT BOOT.
 #    SurfaceFlinger reads it once at startup; the forced validate makes the
@@ -66,13 +70,14 @@ hdmi_up() {
 		return 1
 	fi
 
-	# Mirror queue gate + optional dispatcher pacing knob. Both are debug.hwc.*
-	# props the blob only re-reads inside HWCMediator::deviceDump, so latch
-	# them with a dumpsys BEFORE the display registers.
+	# Mirror queue gate + dispatcher pacing. Both are debug.hwc.* props the
+	# blob only re-reads inside HWCMediator::deviceDump, so latch them with a
+	# dumpsys BEFORE display 1 registers. trigger_by_vsync=0 is now the default
+	# in mirror mode because vsync pacing made the external picture stutter.
 	setprop debug.hwc.mirror_state 1
-	if [ "$(getprop persist.sys.xdplus.hdmi_novsync)" = "1" ]; then
+	if [ "$(getprop persist.sys.xdplus.hdmi_novsync)" != "0" ]; then
 		setprop debug.hwc.trigger_by_vsync 0
-		xlog "trigger_by_vsync=0 (stutter knob)"
+		xlog "trigger_by_vsync=0 (default mirror pacing)"
 	fi
 	dumpsys SurfaceFlinger > /dev/null
 
@@ -136,6 +141,16 @@ hdmi_down() {
 	setprop debug.hwc.mirror_state 4
 	xlog "HDMI torn down"
 }
+
+# Bring-up stays manual (Settings button / hdmictl) on purpose. A shell watcher
+# polling /sys/class/switch/hdmi/state costs a wakeup every couple of seconds
+# for the entire uptime, which is not affordable against a 0.338 %/h standby
+# floor. Automatic bring-up needs an event-driven listener instead: the switch
+# class emits a NETLINK_KOBJECT_UEVENT uevent on plug/unplug, so a native
+# daemon can block in recv() and cost nothing while idle. Note that poll() on
+# the sysfs attribute is NOT an alternative -- the driver calls
+# kobject_uevent() and never sysfs_notify(), so the attribute never wakes a
+# poller.
 
 # Relay a vkshim compile-progress update (sys.xdplus.vkcompile = "<pkg>:<count>")
 # to the Settings receiver. Reads the prop live rather than taking an argument so

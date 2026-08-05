@@ -112,3 +112,15 @@ persist.sys.wifi_ps_pin_off=1
 # packages via PackageManagerService, forcing the Skia backend instead.
 # No APK modification needed; Vulkan games remain untouched.
 persist.sys.xdplus.flutter_disable_impeller=dev.imranr.obtainium,dev.bikram.obtainx
+
+# HDMI output: mirror-first default. persist.sys.xdplus.hdmi_force_validate is
+# read by SurfaceFlinger once at startup; 0 lets the vendor composer enter its
+# DECOUPLE_MIRROR path, 1 forces the external display onto CLIENT composition
+# (the extension-mode path that leaves the built-in panel frozen). The Settings
+# toggle still allows flipping to extension mode, but it takes a reboot.
+persist.sys.xdplus.hdmi_force_validate=0
+
+# Mirror pacing: stop the composer from pacing external frames on vsync. The
+# default vsync-paced path produced a visibly stuttery mirror; disabling it is
+# now the default. The Settings toggle can re-enable it for A/B testing.
+persist.sys.xdplus.hdmi_novsync=1
