@@ -142,15 +142,14 @@ hdmi_down() {
 	xlog "HDMI torn down"
 }
 
-# Bring-up stays manual (Settings button / hdmictl) on purpose. A shell watcher
-# polling /sys/class/switch/hdmi/state costs a wakeup every couple of seconds
-# for the entire uptime, which is not affordable against a 0.338 %/h standby
-# floor. Automatic bring-up needs an event-driven listener instead: the switch
-# class emits a NETLINK_KOBJECT_UEVENT uevent on plug/unplug, so a native
-# daemon can block in recv() and cost nothing while idle. Note that poll() on
-# the sysfs attribute is NOT an alternative -- the driver calls
-# kobject_uevent() and never sysfs_notify(), so the attribute never wakes a
-# poller.
+# hdmi_up/hdmi_down are also driven automatically on cable plug/unplug, by
+# /system/bin/xdplus_hdmid. That daemon sleeps on the kernel uevent netlink
+# socket rather than polling this state, deliberately: a shell watcher reading
+# /sys/class/switch/hdmi/state on a timer costs a wakeup per interval for the
+# whole uptime, which is not affordable against a 0.338 %/h standby floor.
+# poll() on the sysfs attribute is not an alternative either -- the switch
+# class calls kobject_uevent_env() and never sysfs_notify(), so the attribute
+# never wakes a poller. Both entry points remain callable by hand.
 
 # Relay a vkshim compile-progress update (sys.xdplus.vkcompile = "<pkg>:<count>")
 # to the Settings receiver. Reads the prop live rather than taking an argument so

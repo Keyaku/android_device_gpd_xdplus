@@ -16,3 +16,21 @@ LOCAL_SRC_FILES := hdmictl.c
 LOCAL_MULTILIB := first
 LOCAL_CFLAGS := -Wall
 include $(BUILD_EXECUTABLE)
+
+# xdplus_hdmid — event-driven HDMI plug/unplug watcher, /system/bin/xdplus_hdmid.
+#
+# Sleeps on the kernel's uevent netlink socket and runs xdplus_tweaks.sh's
+# hdmi_up/hdmi_down on a cable transition. Deliberately not a shell poll loop:
+# see the header comment in xdplus_hdmid.c for why netlink is the only
+# zero-wakeup option here (the switch class never calls sysfs_notify, so
+# poll() on the sysfs attribute cannot work).
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := xdplus_hdmid
+LOCAL_MODULE_TAGS := optional
+LOCAL_SRC_FILES := xdplus_hdmid.c
+LOCAL_MULTILIB := first
+LOCAL_CFLAGS := -Wall -Werror
+LOCAL_SHARED_LIBRARIES := liblog
+LOCAL_INIT_RC := xdplus_hdmid.rc
+include $(BUILD_EXECUTABLE)
