@@ -1,0 +1,15 @@
+# health@2.1 served from /system rather than /vendor (the vendor blob set has no
+# health HAL). Runs as user system with WAKE_ALARM and its own /dev/kmsg handle,
+# both declared in the service's rc file.
+type hal_health_xdplus, domain;
+type hal_health_xdplus_exec, exec_type, system_file_type, file_type;
+
+init_daemon_domain(hal_health_xdplus)
+hal_server_domain(hal_health_xdplus, hal_health)
+
+# The rc file grants `capabilities WAKE_ALARM` and opens /dev/kmsg for write.
+allow hal_health_xdplus self:capability2 wake_alarm;
+allow hal_health_xdplus kmsg_device:chr_file { open write };
+
+# Battery and charger state comes from sysfs power_supply.
+r_dir_file(hal_health_xdplus, sysfs_batteryinfo)

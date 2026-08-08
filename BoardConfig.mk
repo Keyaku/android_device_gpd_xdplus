@@ -158,8 +158,13 @@ TARGET_HAS_NO_WIFI_STATS := true
 TARGET_RECOVERY_FSTAB := device/gpd/xdplus/rootdir/root/fstab.mt8173
 TARGET_USERIMAGES_USE_EXT4 := true
 
-# SELinux (I wish... but we aren't that far yet.)
-BOARD_SEPOLICY_DIRS += device/gpd/xdplus/sepolicy
+# SELinux. This port's own policy lives in the SYSTEM_EXT slot, not in
+# BOARD_SEPOLICY_DIRS: that variable feeds the *vendor* policy, and on this
+# device /vendor is the frozen ALLDOCUBE partition whose own nonplat_sepolicy.cil
+# init loads -- a vendor_sepolicy.cil built from source is staged into
+# out/.../system/vendor/ and then shadowed by the partition mount, so it would
+# never be loaded at all. system_ext ships inside system.img, which we do control.
+BOARD_PLAT_PRIVATE_SEPOLICY_DIR := device/gpd/xdplus/sepolicy/private
 
 # OpenGL
 USE_OPENGL_RENDERER:= true

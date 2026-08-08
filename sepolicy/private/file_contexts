@@ -1,0 +1,15 @@
+# This port's own services. All live on /system or /system_ext, so their exec
+# types are system_file_type -- the platform's hal_*_default_exec types are
+# vendor_file_type and labelling a /system file with one fails a neverallow.
+
+/system/bin/hw/android\.hardware\.health@2\.1-service\.xdplus          u:object_r:hal_health_xdplus_exec:s0
+/system/bin/hw/android\.hardware\.configstore@1\.1-service\.xdplus     u:object_r:hal_configstore_xdplus_exec:s0
+/system/bin/hw/android\.hardware\.dumpstate@1\.1-service\.xdplus       u:object_r:hal_dumpstate_xdplus_exec:s0
+/system/bin/hw/android\.hardware\.media\.omx@1\.0-service\.xdplus      u:object_r:hal_omx_xdplus_exec:s0
+
+/system_ext/bin/hw/android\.hardware\.keymaster@3\.0-service\.xdplus                u:object_r:hal_keymaster_xdplus_exec:s0
+/system_ext/bin/hw/android\.hardware\.keymaster@4\.1-service\.xdplus                u:object_r:hal_keymaster_xdplus_exec:s0
+/system_ext/bin/hw/android\.hardware\.gatekeeper@1\.0-service\.xdplus               u:object_r:hal_gatekeeper_xdplus_exec:s0
+/system_ext/bin/hw/android\.hardware\.gatekeeper@1\.0-service\.software\.xdplus     u:object_r:hal_gatekeeper_xdplus_exec:s0
+
+/system/bin/xdplus_hdmid                                              u:object_r:xdplus_hdmid_exec:s0

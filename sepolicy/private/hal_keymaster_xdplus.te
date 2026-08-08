@@ -1,0 +1,7 @@
+# TEE-backed keymaster 3.0 and 4.1, served from /system_ext. Both binaries share
+# one domain: same trustlet, same access, different HIDL versions.
+type hal_keymaster_xdplus, domain;
+type hal_keymaster_xdplus_exec, exec_type, system_file_type, file_type;
+
+init_daemon_domain(hal_keymaster_xdplus)
+hal_server_domain(hal_keymaster_xdplus, hal_keymaster)

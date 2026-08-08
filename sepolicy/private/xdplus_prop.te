@@ -1,0 +1,7 @@
+# Property type for this port's own runtime switches (sys.xdplus.*,
+# persist.sys.xdplus.*). The Settings menu writes the persist ones from an app,
+# so system_server and the platform apps need set access alongside the daemon.
+type xdplus_prop, property_type;
+
+set_prop(system_server, xdplus_prop)
+set_prop(system_app, xdplus_prop)
