@@ -12,4 +12,13 @@ allow hal_health_xdplus self:capability2 wake_alarm;
 allow hal_health_xdplus kmsg_device:chr_file { open write };
 
 # Battery and charger state comes from sysfs power_supply.
+#
+# MEASURED, not assumed: under enforcing this domain was denied `read` on
+# `present`, `capacity` and `voltage_now` with tcontext=u:object_r:sysfs:s0 --
+# this kernel's power_supply nodes are plain `sysfs`, NOT `sysfs_batteryinfo`,
+# because nothing has ever labelled them (there is no device genfs_contexts).
+# Granting sysfs_batteryinfo alone leaves the HAL reporting a flat battery and
+# "USB powered: false" while charging. The genfs labelling is the better fix and
+# is the next step; until then this reads sysfs.
 r_dir_file(hal_health_xdplus, sysfs_batteryinfo)
+r_dir_file(hal_health_xdplus, sysfs)
