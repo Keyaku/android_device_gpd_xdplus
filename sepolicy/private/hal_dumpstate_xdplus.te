@@ -1,0 +1,6 @@
+# IDumpstateDevice 1.0/1.1, served from /system.
+type hal_dumpstate_xdplus, domain;
+type hal_dumpstate_xdplus_exec, exec_type, system_file_type, file_type;
+
+init_daemon_domain(hal_dumpstate_xdplus)
+hal_server_domain(hal_dumpstate_xdplus, hal_dumpstate)

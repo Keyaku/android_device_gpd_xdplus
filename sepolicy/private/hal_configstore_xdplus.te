@@ -1,0 +1,8 @@
+# ISurfaceFlingerConfigs, served from /system. Replaces the vendor
+# configstore-hal-1-0, which is stopped in init.xdplus.rc -- do not grant that
+# one anything, it is meant to stay dead.
+type hal_configstore_xdplus, domain;
+type hal_configstore_xdplus_exec, exec_type, system_file_type, file_type;
+
+init_daemon_domain(hal_configstore_xdplus)
+hal_server_domain(hal_configstore_xdplus, hal_configstore)

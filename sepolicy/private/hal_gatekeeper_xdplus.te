@@ -1,0 +1,7 @@
+# Gatekeeper 1.0, both the TEE-backed service and the software fallback, served
+# from /system_ext. One domain for both, as with keymaster.
+type hal_gatekeeper_xdplus, domain;
+type hal_gatekeeper_xdplus_exec, exec_type, system_file_type, file_type;
+
+init_daemon_domain(hal_gatekeeper_xdplus)
+hal_server_domain(hal_gatekeeper_xdplus, hal_gatekeeper)

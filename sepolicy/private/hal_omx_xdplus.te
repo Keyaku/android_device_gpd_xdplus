@@ -1,0 +1,7 @@
+# IOmx / IOmxStore, served from /system. Runs as user mediacodec with the
+# camera, drmrpc and mediadrm groups, per its rc file.
+type hal_omx_xdplus, domain;
+type hal_omx_xdplus_exec, exec_type, system_file_type, file_type;
+
+init_daemon_domain(hal_omx_xdplus)
+hal_server_domain(hal_omx_xdplus, hal_omx)

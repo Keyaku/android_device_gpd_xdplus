@@ -1,0 +1,6 @@
+# This port's own runtime switches, set by the in-Settings "GPD XD+" menu and by
+# xdplus_hdmid's bring-up script. Without an entry here they fall to system_prop
+# (the `sys.` and `persist.sys.` prefixes), which is far broader than this port
+# needs and would mean granting our daemon write access to every system property.
+sys.xdplus.             u:object_r:xdplus_prop:s0
+persist.sys.xdplus.     u:object_r:xdplus_prop:s0
