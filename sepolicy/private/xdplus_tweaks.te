@@ -1,0 +1,91 @@
+# Privileged dispatcher for the in-Settings "GPD XD+" menu, /system/bin/xdplus_tweaks.
+#
+# Three init services and xdplus_hdmid all exec this one script: the momentary
+# action dispatcher (reads sys.xdplus.action), the boot pass that re-applies
+# persisted toggles and prunes the shader-cache directory, and the vkshim
+# compile-progress relay. One domain covers all four entry points -- same
+# script, same privileges, only the argument differs.
+#
+# It runs as root by necessity: it pokes debugfs, drives the HDMI TX through
+# hdmictl and rewrites /data/vkshim on behalf of every app.
+type xdplus_tweaks, domain;
+type xdplus_tweaks_exec, exec_type, system_file_type, file_type;
+
+init_daemon_domain(xdplus_tweaks)
+
+# xdplus_hdmid runs the same bring-up on a cable event. It execs the dispatcher
+# directly rather than through the shell, so the transition happens here instead
+# of leaving the bring-up in the daemon's own domain.
+domain_auto_trans(xdplus_hdmid, xdplus_tweaks_exec, xdplus_tweaks)
+
+# It is a shell script, so it needs the interpreter and every toolbox applet it
+# calls (getprop, setprop, rm, chmod, log, hdmictl, dumpsys, am). They stay in
+# this domain: all of them are ours or the platform's, and transitioning to
+# shell would be strictly more privilege, not less.
+allow xdplus_tweaks shell_exec:file rx_file_perms;
+allow xdplus_tweaks system_file:file rx_file_perms;
+allow xdplus_tweaks toolbox_exec:file rx_file_perms;
+# dac_override is neverallow-ed for new domains (domain.te); the script runs as
+# root and owns everything it touches, so it does not need it.
+allow xdplus_tweaks self:capability { fowner fsetid chown };
+
+# The HDMI half: /d/hdmi and /d/dispsys are the register and state interfaces
+# (plain debugfs and debugfs_fb on this kernel), /dev/hdmitx is what hdmictl
+# issues the MTK_HDMI_* ioctls on, and the script chmods the two debugfs nodes
+# so the Settings app's own diagnostics can read them.
+allow xdplus_tweaks debugfs:dir search;
+allow xdplus_tweaks xdplus_debugfs_hdmi:file { open read write getattr setattr };
+#
+# ⚠️ /d/dispsys is NOT covered: it is labelled debugfs_fb, a type declared only
+# in the OEM's frozen vendor CIL, which is loaded at runtime and cannot be named
+# at build time (checkpolicy fails with `unknown type debugfs_fb`). The script's
+# `chmod 666 /d/dispsys` will therefore be denied under enforcement. It is a
+# convenience for later manual register reads, not part of bring-up, so nothing
+# in the HDMI path depends on it -- but it needs a vendor-side rule to fix.
+allow xdplus_tweaks graphics_device:chr_file { open read write ioctl };
+r_dir_file(xdplus_tweaks, sysfs)
+
+# Properties: the HWC debug switches it latches before bring-up, and this port's
+# own state. sys.xdplus.action is cleared by the script when an action finishes.
+set_prop(xdplus_tweaks, xdplus_prop)
+set_prop(xdplus_tweaks, debug_prop)
+
+# `dumpsys SurfaceFlinger` / `dumpsys display` gate the bring-up, and the
+# compile-progress relay sends a broadcast to the Settings receiver.
+binder_use(xdplus_tweaks)
+binder_call(xdplus_tweaks, surfaceflinger)
+binder_call(xdplus_tweaks, system_server)
+allow xdplus_tweaks surfaceflinger_service:service_manager find;
+allow xdplus_tweaks display_service:service_manager find;
+allow xdplus_tweaks activity_service:service_manager find;
+allow xdplus_tweaks window_service:service_manager find;
+allow xdplus_tweaks input_service:service_manager find;
+
+# system_server calls back into the script's binder thread while it is dumping.
+binder_call(system_server, xdplus_tweaks)
+
+# `am broadcast` runs through app_process, not a plain toolbox applet.
+allow xdplus_tweaks zygote_exec:file rx_file_perms;
+allow xdplus_tweaks dalvikcache_data_file:dir { search getattr };
+allow xdplus_tweaks dalvikcache_data_file:file r_file_perms;
+allow xdplus_tweaks tmpfs:file { read write getattr map };
+# ⚠️ Not granted, and cannot be: device_config_* properties are neverallow-ed
+# to any domain outside the platform's own list (system/sepolicy/public/property.te).
+# app_process reads them on startup for its own feature flags and falls back to
+# defaults when denied, so the four denials this leaves are harmless noise.
+
+# dumpsys hands the dumped service the script's own stdout pipe.
+allow surfaceflinger xdplus_tweaks:fd use;
+allow system_server xdplus_tweaks:fd use;
+allow surfaceflinger xdplus_tweaks:fifo_file { read write getattr };
+allow system_server xdplus_tweaks:fifo_file { read write getattr };
+
+# The read side of /data/vkshim is granted so the budget pass can still measure
+# and log what it would evict; only the write and unlink halves are refused.
+allow xdplus_tweaks system_data_file:dir { search open read getattr };
+allow xdplus_tweaks system_data_file:file getattr;
+
+# ⚠️ The /data/vkshim prune is NOT granted, and cannot be -- see the comment in
+# xdplus_files.te. Under enforcement the boot pass will fail to evict caches and
+# the directory grows unbounded until vkshim's cache layout is changed. The
+# script's other boot work (retired-property pruning) is unaffected.

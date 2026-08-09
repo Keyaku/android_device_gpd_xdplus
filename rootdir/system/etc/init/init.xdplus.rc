@@ -32,10 +32,13 @@ on init
 
 # --- GPD XD+ tweaks menu dispatch (Settings > GPD XD+) -----------------------
 # The in-Settings menu sets sys.xdplus.*/persist.sys.xdplus.* props; these
-# triggers run the root-side dispatcher. See rootdir .../xdplus_tweaks.sh.
-# SELinux is permissive on this port, so no extra
-# property/domain rules are needed.
-service xdplus-tweaks /system/bin/sh /system/etc/xdplus_tweaks.sh ${sys.xdplus.action}
+# triggers run the root-side dispatcher. See rootdir/system/bin/xdplus_tweaks.
+#
+# The dispatcher is exec'd directly, NOT as `/system/bin/sh <script>`: init's
+# exec target has to be the script itself, or every one of these services runs
+# as u:r:init:s0 and is denied execute_no_trans the moment SELinux enforces.
+# rootdir/Android.mk installs it 0755 with its own exec label for that reason.
+service xdplus-tweaks /system/bin/xdplus_tweaks
     class main
     user root
     group root system graphics input
@@ -44,8 +47,10 @@ service xdplus-tweaks /system/bin/sh /system/etc/xdplus_tweaks.sh ${sys.xdplus.a
 
 # Momentary action dispatch. The menu only ever sets these post-boot, so the
 # script (which pokes SurfaceFlinger) is always safe here. hdmi_up/hdmi_down
-# route through the single dispatcher service, whose command arg is
-# ${sys.xdplus.action}.
+# route through the single dispatcher service, which reads sys.xdplus.action
+# itself. It used to take ${sys.xdplus.action} as a command-line argument, but
+# init expands that once when it PARSES this file, with the property unset, so
+# every dispatch ran with an empty command and did nothing.
 on property:sys.xdplus.action=hdmi_up
     start xdplus-tweaks
 
@@ -61,7 +66,7 @@ on property:sys.xdplus.action=vkcache_clear
 # the Settings VkCompileReceiver, which shows a notification or toast per
 # persist.sys.xdplus.vknotify. The service re-reads the prop itself, so updates
 # arriving while a relay is still running are coalesced, not queued.
-service xdplus-vknotify /system/bin/sh /system/etc/xdplus_tweaks.sh vknotify
+service xdplus-vknotify /system/bin/xdplus_tweaks vknotify
     class main
     user root
     group root system
@@ -89,7 +94,7 @@ on post-fs-data
     chmod 01777 /data/vkshim
 
 # Re-apply persisted toggles once the framework is up.
-service xdplus-tweaks-boot /system/bin/sh /system/etc/xdplus_tweaks.sh boot
+service xdplus-tweaks-boot /system/bin/xdplus_tweaks boot
     class main
     user root
     group root system graphics
@@ -103,7 +108,7 @@ on property:sys.boot_completed=1
 # init only creates the dir; nothing recreates the templates wpa_supplicant is
 # launched with, so a factory reset otherwise leaves Wi-Fi permanently unable to
 # start supplicant. Copy-if-missing, root, once, at post-fs-data.
-service xdplus-wifiseed /system/bin/sh /system/etc/xdplus_wifi_seed.sh
+service xdplus-wifiseed /system/bin/xdplus_wifi_seed
     class main
     user root
     group wifi system

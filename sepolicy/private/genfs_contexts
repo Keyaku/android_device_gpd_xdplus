@@ -1,0 +1,8 @@
+# /d/hdmi is the mini-HDMI driver's debugfs interface: the bring-up writes its
+# commands there and the diagnostics read registers back.
+#
+# It has to have a type of its own. Platform policy neverallows every domain
+# except init, vendor_init and dumpstate from reading or writing the generic
+# `debugfs` label ("This is too broad" -- system/sepolicy/public/domain.te), so
+# granting xdplus_tweaks access to it fails the build rather than the boot.
+genfscon debugfs /hdmi u:object_r:xdplus_debugfs_hdmi:s0

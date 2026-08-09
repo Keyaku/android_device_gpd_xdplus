@@ -1,0 +1,20 @@
+# Types for the two file objects this port owns outright.
+
+# The mini-HDMI debugfs node, labelled in genfs_contexts. debugfs_type carries
+# the platform's debugfs neverallows (no executables there, and so on) while
+# keeping it out of the blanket generic-debugfs ban.
+type xdplus_debugfs_hdmi, fs_type, debugfs_type;
+
+# ⚠️ /data/vkshim deliberately has NO type of its own, and cannot get one.
+#
+# It is a single directory that vkshim writes to from inside every app process.
+# A custom type fails the build: app_neverallows.te forbids every untrusted app
+# from `create`/`unlink` on any type outside the per-app sandbox set. Keeping
+# system_data_file fails too, because domain.te neverallows a new domain from
+# writing or unlinking that type -- so the boot-time budget prune cannot be
+# granted either.
+#
+# Under enforcement, therefore, both halves of the shader cache stop working:
+# apps cannot write their .pcache and xdplus_tweaks cannot prune the directory.
+# The fix is a design change in vkshim -- put each cache inside the app's own
+# sandbox, where app_data_file access already exists -- not a policy rule.

@@ -19,3 +19,9 @@
 /(system_ext|system/system_ext)/bin/hw/android\.hardware\.gatekeeper@1\.0-service\.software\.xdplus  u:object_r:hal_gatekeeper_xdplus_exec:s0
 
 /system/bin/xdplus_hdmid                                              u:object_r:xdplus_hdmid_exec:s0
+
+# The two privileged shell services (rootdir/Android.mk). Installed as 0755
+# executables in /system/bin so init can transition into their domains -- as
+# /system/etc scripts run through `sh` they had no exec label of their own.
+/system/bin/xdplus_tweaks                                             u:object_r:xdplus_tweaks_exec:s0
+/system/bin/xdplus_wifi_seed                                          u:object_r:xdplus_wifiseed_exec:s0

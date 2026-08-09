@@ -1,6 +1,6 @@
 # Event-driven mini-HDMI plug/unplug watcher. Not a HAL: a plain root daemon
 # started from sys.boot_completed that sleeps on the uevent netlink socket, and
-# on a cable event runs the bring-up protocol in /system/etc/xdplus_tweaks.sh.
+# on a cable event runs the bring-up protocol in /system/bin/xdplus_tweaks.
 #
 # Today it runs as u:r:init:s0 with no transition, and its uevent socket reads
 # are the single largest source of denials on this device.
@@ -15,21 +15,16 @@ allow xdplus_hdmid self:netlink_kobject_uevent_socket { create bind read setopt 
 # HDMI TX character device and the switch class node the bring-up polls.
 allow xdplus_hdmid graphics_device:chr_file { open read write ioctl };
 r_dir_file(xdplus_hdmid, sysfs)
+# /sys/class/switch/hdmi/state, the cable state it re-reads on every uevent.
+r_dir_file(xdplus_hdmid, sysfs_switch)
 
-# It execs /system/bin/sh to run the bring-up script, and stays in its own
-# domain rather than transitioning to shell -- the script is ours, shipped in
-# /system/etc, and giving it the shell domain would be strictly more privilege.
-allow xdplus_hdmid shell_exec:file rx_file_perms;
+# It execs the dispatcher, which transitions into xdplus_tweaks (see that
+# file's domain_auto_trans). Everything the bring-up needs -- debugfs, the HDMI
+# TX, the debug.hwc.* properties, the SurfaceFlinger and display dumpsys calls
+# -- therefore belongs to xdplus_tweaks, not here: this daemon only has to be
+# able to start it.
+allow xdplus_hdmid xdplus_tweaks_exec:file rx_file_perms;
 allow xdplus_hdmid system_file:file rx_file_perms;
 
-# The script latches debug.hwc.* through a dumpsys and records progress in
-# sys.xdplus.*.
+# It records its own progress in sys.xdplus.*.
 set_prop(xdplus_hdmid, xdplus_prop)
-set_prop(xdplus_hdmid, debug_prop)
-
-# `dumpsys SurfaceFlinger` / `dumpsys display` from the bring-up script.
-binder_use(xdplus_hdmid)
-allow xdplus_hdmid surfaceflinger_service:service_manager find;
-allow xdplus_hdmid display_service:service_manager find;
-binder_call(xdplus_hdmid, surfaceflinger)
-binder_call(xdplus_hdmid, system_server)

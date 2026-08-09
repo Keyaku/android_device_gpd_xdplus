@@ -35,7 +35,7 @@
 #include <log/log.h>
 
 #define HDMI_STATE_PATH		"/sys/class/switch/hdmi/state"
-#define TWEAKS_PATH		"/system/etc/xdplus_tweaks.sh"
+#define TWEAKS_PATH		"/system/bin/xdplus_tweaks"
 
 /* enum HDMI_STATE in the kernel's hdmi_drv.h. hdmi_switch_data only ever
  * carries these two; anything else means the driver changed under us.
@@ -64,7 +64,7 @@ static int read_hdmi_state(void)
 	return atoi(buf);
 }
 
-/* Run xdplus_tweaks.sh synchronously. Bring-up takes seconds; further uevents
+/* Run xdplus_tweaks synchronously. Bring-up takes seconds; further uevents
  * queue in the socket buffer meanwhile and are resolved by the sysfs re-read
  * on the next pass, so blocking here cannot lose a transition.
  */
@@ -82,7 +82,12 @@ static void run_tweaks(const char *action)
 	}
 
 	if (pid == 0) {
-		execl("/system/bin/sh", "sh", TWEAKS_PATH, action, (char *)NULL);
+		/* Exec the dispatcher itself rather than `sh <script>`: the
+		 * exec target is what SELinux transitions on, and going
+		 * through the shell would leave the bring-up running in this
+		 * daemon's own domain.
+		 */
+		execl(TWEAKS_PATH, "xdplus_tweaks", action, (char *)NULL);
 		ALOGE("execl failed: %s", strerror(errno));
 		_exit(127);
 	}

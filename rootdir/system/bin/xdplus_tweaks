@@ -1,9 +1,9 @@
 #!/system/bin/sh
-# xdplus_tweaks.sh — privileged dispatcher for the in-Settings "GPD XD+" menu.
+# xdplus_tweaks — privileged dispatcher for the in-Settings "GPD XD+" menu.
 # Runs as root from init.xdplus.rc triggers. The Settings menu only sets the
 # sys.xdplus.*/persist.sys.xdplus.* props; all root-side work happens here.
 #
-# Usage: xdplus_tweaks.sh <command>
+# Usage: xdplus_tweaks [command]   (no command = read sys.xdplus.action)
 #   hdmi_up      mini-HDMI DECOUPLE_MIRROR bringup
 #   hdmi_down    tear HDMI down, return to built-in panel only
 #   boot         re-apply persisted toggles at boot_completed, prune the cache dir
@@ -205,7 +205,16 @@ vkcache_clear() {
 	xlog "shader caches cleared"
 }
 
+# No argument means "read the dispatch property yourself".
+#
+# The dispatcher service used to pass ${sys.xdplus.action} on its command line.
+# init expands that when it PARSES the rc file, and the property is unset then,
+# so the service definition was dropped: `init.svc.xdplus-tweaks` did not exist
+# at all and every momentary menu action was a no-op. Reading the property here
+# is what makes the trigger work; the fixed-argument services (boot, vknotify)
+# still pass theirs literally.
 CMD="$1"
+[ -n "$CMD" ] || CMD="$(getprop sys.xdplus.action)"
 
 # Retired toggles: clear properties whose Settings entry no longer exists.
 #
