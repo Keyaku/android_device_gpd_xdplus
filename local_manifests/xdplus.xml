@@ -2,26 +2,32 @@
 <!--
   Local manifest for the GPD XD+ port.
 
-  ⚠️ THIS FILE IS INERT WHERE IT SITS. It is a template, kept in the device tree
-  so that it is versioned and survives — `.repo/` is not backed up by anything.
-  repo only reads `.repo/local_manifests/*.xml`.
-
-  DO NOT copy it into `.repo/local_manifests/` until all three projects below
-  have been pushed. Today none of them has been: `repo list` knows no gpd project
-  at all, and device/vendor/kernel are plain local git clones carrying unpushed
-  history with no remote-tracking refs. Activating this file would put `repo sync`
-  — an ordinary, previously harmless command — in charge of paths holding every
-  local commit the port depends on, with nothing on the remote to sync against.
-
-  Activating this is a migration, not a copy: the three paths already hold
-  standalone git checkouts, which repo refuses to adopt (it raises
-  "unsupported checkout state" rather than clobbering them), and
-  device/gpd/xdplus/keys/ is gitignored — a fresh clone loses every signing key.
-  Follow the runbook: back up the keys, push all three branches, verify the
-  remote hashes, then hand over one path at a time.
+  ⚠️ THIS FILE IS A TEMPLATE WHERE IT SITS. repo only reads
+  `.repo/local_manifests/*.xml`; it is kept here so that it is versioned and
+  survives, because `.repo/` is not backed up by anything.
 
       mkdir -p .repo/local_manifests
       cp device/gpd/xdplus/local_manifests/xdplus.xml .repo/local_manifests/
+
+  All three projects below are pushed and public, so activating this on a fresh
+  checkout is an ordinary copy. On a machine that already carries standalone
+  clones at those paths it is still a migration: repo refuses to adopt them
+  ("unsupported checkout state") and device/gpd/xdplus/keys/ is gitignored, so a
+  fresh clone arrives with no signing keys and cannot build an installable
+  update. Back the keys up first, one path at a time.
+
+  ⚠️ `repo sync` leaves a project detached; `repo start <branch> <path>` after.
+  ⚠️ The fetch base is https, which cannot authenticate on the maintainer's host,
+  so each tree carries a `remote.keyaku.pushurl` in the git@github.com: form.
+
+  ⚠️ NOT LISTED HERE, and the one reproducibility gap left: the in-Settings
+  "GPD XD+" menu. It lives on a local branch of packages/apps/Settings, which
+  has no fork to point a project entry at. It is captured instead as
+  device/gpd/xdplus/patches/0029-settings-gpd-xdplus-menu.patch, applied like
+  every other numbered patch. If a fork is ever made, add a <remove-project> for
+  the LineageOS Settings project plus a <project> for the fork here, and drop
+  0029 in the same change -- never both, or the patch applies to a tree that
+  already carries it.
 
   The kernel entry is what makes `TARGET_KERNEL_SOURCE := kernel/gpd/mt8176`
   (BoardConfig.mk, the in-tree kernel build) resolve on a fresh checkout.
