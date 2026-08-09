@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GPD XD+ → Display output. Toggles set sys.xdplus.*/persist.sys.xdplus.*
+     props; init.xdplus.rc dispatches the privileged work. -->
+<PreferenceScreen
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:key="gpd_xdplus_display_settings"
+    android:title="@string/gpd_xdplus_cat_display">
+
+    <!-- Banner, not a control: HDMI mirror works but is not finished, and the
+         page should say so before the first tappable entry rather than letting
+         it read as a shipped feature. -->
+    <Preference
+        android:key="xdplus_hdmi_experimental"
+        android:title="@string/xdplus_hdmi_experimental_title"
+        android:summary="@string/xdplus_hdmi_experimental_summary"
+        android:selectable="false"
+        android:persistent="false" />
+
+    <Preference
+        android:key="xdplus_hdmi_up"
+        android:title="@string/xdplus_hdmi_up_title"
+        android:summary="@string/xdplus_hdmi_up_summary" />
+
+    <Preference
+        android:key="xdplus_hdmi_down"
+        android:title="@string/xdplus_hdmi_down_title"
+        android:summary="@string/xdplus_hdmi_down_summary" />
+
+    <SwitchPreference
+        android:key="xdplus_hdmi_mirror_mode"
+        android:title="@string/xdplus_hdmi_mirror_mode_title"
+        android:summary="@string/xdplus_hdmi_mirror_mode_summary" />
+
+    <SwitchPreference
+        android:key="xdplus_hdmi_novsync"
+        android:title="@string/xdplus_hdmi_novsync_title"
+        android:summary="@string/xdplus_hdmi_novsync_summary" />
+
+    <ListPreference
+        android:key="xdplus_hdmi_res"
+        android:title="@string/xdplus_hdmi_res_title"
+        android:entries="@array/xdplus_hdmi_res_entries"
+        android:entryValues="@array/xdplus_hdmi_res_values"
+        android:defaultValue="2" />
+
+</PreferenceScreen>

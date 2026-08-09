@@ -75,6 +75,12 @@ PRODUCT_COPY_FILES += \
 # /system/etc leaves the exec target as the shell.
 PRODUCT_PACKAGES += xdplus_tweaks xdplus_wifi_seed
 
+# The in-Settings "GPD XD+" menu, as an app in this tree (see parts/). It was a
+# fork of packages/apps/Settings until 2026-08-09; Settings discovers the tile
+# through the app's manifest metadata, so nothing upstream is modified and the
+# entry cannot appear on a device that does not build this app.
+PRODUCT_PACKAGES += XdPlusParts
+
 # Remove camera features the frozen vendor declares (device has no camera).
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/rootdir/system/etc/sysconfig/xdplus-removed-features.xml:system/etc/sysconfig/xdplus-removed-features.xml
