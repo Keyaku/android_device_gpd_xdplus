@@ -20,14 +20,15 @@
   ⚠️ The fetch base is https, which cannot authenticate on the maintainer's host,
   so each tree carries a `remote.keyaku.pushurl` in the git@github.com: form.
 
-  ⚠️ NOT LISTED HERE, and the one reproducibility gap left: the in-Settings
-  "GPD XD+" menu. It lives on a local branch of packages/apps/Settings, which
-  has no fork to point a project entry at. It is captured instead as
-  device/gpd/xdplus/patches/0029-settings-gpd-xdplus-menu.patch, applied like
-  every other numbered patch. If a fork is ever made, add a <remove-project> for
-  the LineageOS Settings project plus a <project> for the fork here, and drop
-  0029 in the same change -- never both, or the patch applies to a tree that
-  already carries it.
+  packages/apps/Settings carries the in-Settings "GPD XD+" menu, so it is
+  replaced here rather than added: <remove-project> drops the LineageOS project
+  and the <project> below takes its path. It was patch 0029 until the fork
+  existed; that number is retired, not reused.
+
+  ⚠️ Still uncovered: packages/providers/MediaProvider, which carries patch 0028
+  (the microSD setattr EPERM fallback) on a local branch with no fork. Same fix
+  when a fork exists -- remove-project, project, and delete the patch in the
+  same change.
 
   The kernel entry is what makes `TARGET_KERNEL_SOURCE := kernel/gpd/mt8176`
   (BoardConfig.mk, the in-tree kernel build) resolve on a fresh checkout.
@@ -45,6 +46,14 @@
   <project path="device/gpd/xdplus"
            name="android_device_gpd_xdplus"
            remote="keyaku"
+           revision="refs/heads/lineage-18.1" />
+
+  <remove-project name="LineageOS/android_packages_apps_Settings" />
+
+  <project path="packages/apps/Settings"
+           name="android_packages_apps_Settings"
+           remote="keyaku"
+           groups="pdk-fs"
            revision="refs/heads/lineage-18.1" />
 
   <project path="vendor/gpd/xdplus"
