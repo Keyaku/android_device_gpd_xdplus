@@ -1,0 +1,33 @@
+# One-shot /data/misc/wifi seeding at post-fs-data, /system/bin/xdplus_wifi_seed.
+#
+# This port's init only creates the directory; nothing recreates the wpa/p2p
+# supplicant config templates that init.connectivity.rc launches supplicant
+# with, so after a /data wipe supplicant dies and Wi-Fi can never enable. The
+# script copies them if missing and fixes ownership.
+#
+# Separate from xdplus_tweaks on purpose: this one touches Wi-Fi state and
+# nothing else, and has no business holding the HDMI or shader-cache access.
+type xdplus_wifiseed, domain;
+type xdplus_wifiseed_exec, exec_type, system_file_type, file_type;
+
+init_daemon_domain(xdplus_wifiseed)
+
+# Shell script: interpreter plus the cp/chown/chmod applets it calls.
+allow xdplus_wifiseed shell_exec:file rx_file_perms;
+allow xdplus_wifiseed system_file:file rx_file_perms;
+allow xdplus_wifiseed toolbox_exec:file rx_file_perms;
+
+# It runs as root and writes files it then hands to the wifi uid.
+allow xdplus_wifiseed self:capability { chown fowner fsetid };
+
+# toybox `cp` looks the destination context up in file_contexts before it
+# writes, so the copy needs to read the label database itself -- MEASURED as six
+# denials on the first enforcing run, with the copy still succeeding.
+allow xdplus_wifiseed file_contexts_file:file r_file_perms;
+
+# The template is a vendor config; the destination is the wifi data dir, which
+# the script also chowns and chmods.
+allow xdplus_wifiseed vendor_configs_file:dir search;
+allow xdplus_wifiseed vendor_configs_file:file r_file_perms;
+allow xdplus_wifiseed wifi_data_file:dir { search read open write add_name getattr setattr };
+allow xdplus_wifiseed wifi_data_file:file { create open read write getattr setattr };

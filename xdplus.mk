@@ -64,11 +64,16 @@ PRODUCT_COPY_FILES += \
      $(LOCAL_PATH)/configs/agps_profiles_conf2.xml:system/etc/agps_profiles_conf2.xml \
 
 # System-side init additions (stop the crash-looping vendor configstore;
-# seed wpa/p2p supplicant configs on fresh /data — see xdplus_wifi_seed.sh)
+# seed wpa/p2p supplicant configs on fresh /data — see xdplus_wifi_seed)
 PRODUCT_COPY_FILES += \
-    $(LOCAL_PATH)/rootdir/system/etc/init/init.xdplus.rc:system/etc/init/init.xdplus.rc \
-    $(LOCAL_PATH)/rootdir/system/etc/xdplus_wifi_seed.sh:system/etc/xdplus_wifi_seed.sh \
-    $(LOCAL_PATH)/rootdir/system/etc/xdplus_tweaks.sh:system/etc/xdplus_tweaks.sh
+    $(LOCAL_PATH)/rootdir/system/etc/init/init.xdplus.rc:system/etc/init/init.xdplus.rc
+
+# The two privileged shell services init starts (see rootdir/Android.mk). They
+# are modules rather than PRODUCT_COPY_FILES entries because they must land in
+# /system/bin as 0755 executables: init cannot transition a service into its own
+# SELinux domain unless it execs the script itself, and a 0644 file in
+# /system/etc leaves the exec target as the shell.
+PRODUCT_PACKAGES += xdplus_tweaks xdplus_wifi_seed
 
 # Remove camera features the frozen vendor declares (device has no camera).
 PRODUCT_COPY_FILES += \
@@ -158,13 +163,13 @@ PRODUCT_PACKAGES += android.hardware.media.omx@1.0-service.xdplus
 PRODUCT_PACKAGES += vulkan.mt8173
 
 # mini-HDMI bringup helper (see hdmi/Android.mk). Sends the MTK_HDMI_* ioctls
-# the vendor HWC blob never sends. Baked in so xdplus_tweaks.sh's HDMI actions
+# the vendor HWC blob never sends. Baked in so xdplus_tweaks's HDMI actions
 # no longer depend on an artifact hand-pushed to /data/local/tmp.
 PRODUCT_PACKAGES += hdmictl
 
 # Event-driven HDMI plug/unplug watcher (see hdmi/Android.mk). Brings the
 # mirror up and down automatically on a cable transition by running the same
-# xdplus_tweaks.sh actions the Settings buttons use. Sleeps on the uevent
+# xdplus_tweaks actions the Settings buttons use. Sleeps on the uevent
 # netlink socket, so unlike a shell poll loop it costs no wakeups while idle.
 PRODUCT_PACKAGES += xdplus_hdmid
 
