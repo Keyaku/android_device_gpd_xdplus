@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GPD XD+ → Vulkan shader cache. Limits are read by the Vulkan shim
+     (device/gpd/xdplus/vulkan/vkshim.c) from persist.sys.xdplus.vkcache*. -->
+<PreferenceScreen
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:key="gpd_xdplus_shadercache_settings"
+    android:title="@string/gpd_xdplus_cat_shadercache">
+
+    <ListPreference
+        android:key="xdplus_vkcachemax"
+        android:title="@string/xdplus_vkcachemax_title"
+        android:entries="@array/xdplus_vkcache_entries"
+        android:entryValues="@array/xdplus_vkcache_values"
+        android:defaultValue="64" />
+
+    <Preference
+        android:key="xdplus_vkcache_clear"
+        android:title="@string/xdplus_vkcache_clear_title"
+        android:summary="@string/xdplus_vkcache_clear_summary" />
+
+    <!-- Moved here from the old Experimental page: it reports shader compile
+         progress, so it belongs with the cache that makes compiles rare. -->
+    <ListPreference
+        android:key="xdplus_vknotify"
+        android:title="@string/xdplus_vknotify_title"
+        android:entries="@array/xdplus_vknotify_entries"
+        android:entryValues="@array/xdplus_vknotify_values"
+        android:defaultValue="notification" />
+
+</PreferenceScreen>

@@ -163,7 +163,7 @@ vknotify() {
 	[ -z "$V" ] && return 0
 	PKG="${V%%:*}"
 	CNT="${V##*:}"
-	am broadcast -n com.android.settings/.gpd.VkCompileReceiver \
+	am broadcast -n org.lineageos.settings.xdplus/.VkCompileReceiver \
 		--es pkg "$PKG" --es count "$CNT" --es mode "$MODE" >/dev/null 2>&1
 }
 

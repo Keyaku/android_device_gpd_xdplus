@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GPD XD+ device tweaks — landing page. Each entry opens a sub-page; the
+     groups had nothing to do with one another and did not belong on one scroll.
+     Every fragment named here must also be in SettingsGateway.ENTRY_FRAGMENTS. -->
+<PreferenceScreen
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:key="gpd_xdplus_settings"
+    android:title="@string/gpd_xdplus_title">
+
+    <Preference
+        android:key="gpd_xdplus_cat_display"
+        android:title="@string/gpd_xdplus_cat_display"
+        android:summary="@string/gpd_xdplus_cat_display_summary"
+        android:fragment="org.lineageos.settings.xdplus.XdPlusDisplaySettings" />
+
+    <Preference
+        android:key="gpd_xdplus_cat_shadercache"
+        android:title="@string/gpd_xdplus_cat_shadercache"
+        android:summary="@string/gpd_xdplus_cat_shadercache_summary"
+        android:fragment="org.lineageos.settings.xdplus.XdPlusShaderCacheSettings" />
+
+    <!-- A single handheld preference, not a category: it was the only thing
+         left on the old "Experimental patches" page that anyone would set on
+         purpose, and it is neither experimental nor a patch. -->
+    <SwitchPreference
+        android:key="xdplus_hide_error_dialogs"
+        android:title="@string/xdplus_hide_error_dialogs_title"
+        android:summary="@string/xdplus_hide_error_dialogs_summary" />
+
+</PreferenceScreen>

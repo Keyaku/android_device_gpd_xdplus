@@ -1,0 +1,19 @@
+// GPD XD+ device settings. See AndroidManifest.xml for why this is an app in
+// the device tree rather than a change to packages/apps/Settings.
+android_app {
+    name: "XdPlusParts",
+
+    srcs: ["src/**/*.java"],
+    resource_dirs: ["res"],
+
+    // Platform-signed and running as the system user: the pages write
+    // sys.xdplus.* / persist.sys.xdplus.*, which the device policy grants to
+    // system_app, and SystemProperties is a hidden API.
+    certificate: "platform",
+    platform_apis: true,
+    privileged: true,
+
+    optimize: {
+        proguard_flags_files: ["proguard.flags"],
+    },
+}

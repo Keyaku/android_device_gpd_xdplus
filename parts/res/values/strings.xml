@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GPD XD+ device tweaks menu. Kept in a device-specific file so the port's
+     strings never collide with upstream Settings translation churn. -->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+
+    <string name="gpd_xdplus_title" translatable="false">GPD XD+</string>
+    <string name="gpd_xdplus_summary" translatable="false">HDMI output, Vulkan shader cache, crash dialogs</string>
+    <string name="gpd_xdplus_cat_display" translatable="false">Display out (experimental)</string>
+
+    <string name="xdplus_hdmi_up_title" translatable="false">Bring up HDMI mirror</string>
+    <string name="xdplus_hdmi_up_summary" translatable="false">Starts mirroring to the mini-HDMI port. Requires \"HDMI mirror mode\" turned on and a reboot since turning it on, with the screen unlocked. Takes about 30 seconds. If nothing appears, use \"Tear down HDMI\" and try again.</string>
+    <string name="xdplus_hdmi_up_toast" translatable="false">Bringing up HDMI mirror… (~30s)</string>
+    <string name="xdplus_hdmi_down_title" translatable="false">Tear down HDMI</string>
+    <string name="xdplus_hdmi_down_summary" translatable="false">Stop HDMI output and go back to the built-in screen only. Also the way out if a bring-up leaves the picture wrong.</string>
+    <string name="xdplus_hdmi_down_toast" translatable="false">Tearing down HDMI…</string>
+
+
+    <string name="xdplus_hdmi_mirror_mode_title" translatable="false">HDMI mirror mode</string>
+    <string name="xdplus_hdmi_mirror_mode_summary" translatable="false">Required for mirroring, and must be on before the HDMI cable is plugged in. Takes effect after a reboot — turning it on now does nothing until you restart. (Disables the external-display forced validate, which conflicts with mirroring.)</string>
+
+    <string name="xdplus_hdmi_novsync_title" translatable="false">Loosen mirror frame pacing</string>
+    <string name="xdplus_hdmi_novsync_summary" translatable="false">Try this if the mirrored picture stutters. Applied at the next HDMI bring-up, not straight away. (Stops the composer pacing external frames on vsync.)</string>
+
+    <string name="xdplus_hdmi_res_title" translatable="false">HDMI resolution</string>
+
+    <!-- Non-selectable banner at the top of the Display out page. HDMI mirror
+         works and is user-verified, but bring-up depends on several conditions
+         holding together and the built-in panel can come back wrong until
+         teardown — so the page says so rather than looking like a finished
+         feature. -->
+    <string name="xdplus_hdmi_experimental_title" translatable="false">Experimental feature</string>
+    <string name="xdplus_hdmi_experimental_summary" translatable="false">Mirroring to an external screen works, but it is not finished: bring-up can fail, and the built-in screen may show a doubled or discoloured picture until you tear it down. Nothing here damages the device — worst case, reboot.</string>
+
+
+    <string name="xdplus_hide_error_dialogs_title" translatable="false">Hide app crash dialogs</string>
+    <string name="xdplus_hide_error_dialogs_summary" translatable="false">Suppress \"app has stopped\" popups (useful for kiosk / handheld use).</string>
+
+    <string name="xdplus_vknotify_title" translatable="false">Shader compile notification</string>
+    <string name="xdplus_vkcompile_channel" translatable="false">Vulkan shader compilation</string>
+    <string name="xdplus_vkcompile_title" translatable="false">Compiling Vulkan shaders…</string>
+    <string name="xdplus_vkcompile_text" translatable="false">%1$s — %2$s pipelines done. First run per game is slow; later runs use the cache.</string>
+
+    <string-array name="xdplus_vknotify_entries" translatable="false">
+        <item>Notification with progress</item>
+        <item>Toast popups</item>
+        <item>Off</item>
+    </string-array>
+    <string-array name="xdplus_vknotify_values" translatable="false">
+        <item>notification</item>
+        <item>toast</item>
+        <item>off</item>
+    </string-array>
+
+    <!-- Landing-page summaries: say what is behind each entry, since the page
+         is now three doors rather than three headings. -->
+    <string name="gpd_xdplus_cat_display_summary" translatable="false">Experimental — mini-HDMI output: start and stop, mirroring, resolution</string>
+    <string name="gpd_xdplus_cat_shadercache_summary" translatable="false">Storage used by compiled game shaders, and how much to allow</string>
+
+    <string name="gpd_xdplus_cat_shadercache" translatable="false">Vulkan shader cache</string>
+
+    <string name="xdplus_vkcachemax_title" translatable="false">Shader cache limit per app</string>
+    <string name="xdplus_vkcache_clear_title" translatable="false">Clear shader cache</string>
+    <string name="xdplus_vkcache_clear_summary" translatable="false">Clear every cached shader. Each game clears its own the next time you start it, then recompiles its shaders once — slow that one time, fast again afterwards.</string>
+    <string name="xdplus_vkcache_clear_toast" translatable="false">Shader caches will clear the next time each game starts</string>
+    <!-- %1$s is the chosen limit. There is deliberately no "in use" figure:
+         each cache lives inside its own app's sandbox now, which Settings
+         cannot read. -->
+    <string name="xdplus_vkcache_summary" translatable="false">%1$s per app</string>
+
+    <!-- A shader cache trades storage for load time: shaders in it are not
+         recompiled. It only ever grows (the driver blob gives no way to evict a
+         single entry), so it is capped and frozen once full rather than reset,
+         which would throw away every shader at once. -->
+    <string-array name="xdplus_vkcache_entries" translatable="false">
+        <item>32 MB</item>
+        <item>64 MB (Recommended)</item>
+        <item>128 MB</item>
+        <item>256 MB</item>
+    </string-array>
+    <string-array name="xdplus_vkcache_values" translatable="false">
+        <item>32</item>
+        <item>64</item>
+        <item>128</item>
+        <item>256</item>
+    </string-array>
+
+    <!-- Sorted high -> low. 720p60 is the only latch-stable mode (HDMI out is
+         experimental), so it carries the Recommended tag. Values: 1=1080, 2=720, 0=480. -->
+    <string-array name="xdplus_hdmi_res_entries" translatable="false">
+        <item>1080p60</item>
+        <item>720p60 (Recommended)</item>
+        <item>480p60</item>
+    </string-array>
+    <string-array name="xdplus_hdmi_res_values" translatable="false">
+        <item>1</item>
+        <item>2</item>
+        <item>0</item>
+    </string-array>
+
+</resources>
