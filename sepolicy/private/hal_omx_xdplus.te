@@ -9,3 +9,20 @@ hal_server_domain(hal_omx_xdplus, hal_omx)
 # MEASURED: the OMX service is handed buffer handles by the allocator HAL and
 # was denied `use` on its fd.
 hal_client_domain(hal_omx_xdplus, hal_allocator)
+
+# MEASURED under enforcing, and NOT cosmetic: without these, `screenrecord`
+# fails outright (exit 235, zero-byte file) while it succeeds under permissive.
+# The video path runs through the vendor OMX components, which talk to the
+# vendor binder domain and open the GPU device for their buffers.
+vndbinder_use(hal_omx_xdplus)
+allow hal_omx_xdplus gpu_device:dir search;
+allow hal_omx_xdplus gpu_device:chr_file rw_file_perms;
+
+# ⚠️ The rest of what the codecs need CANNOT be written here, and it is not
+# optional: `/dev/dri/card0` is dri_device, `/dev/dri/renderD128` is
+# render_device, and the OMX components also want `search` on debugfs_ion and a
+# read of mtk_em_video_log_omx_prop. Every one of those types is declared only
+# in the OEM's frozen vendor CIL -- loaded at runtime, invisible at build time,
+# so naming them fails the build with `unknown type`. Those rules live in the
+# vendor tree's own policy addendum instead; see
+# vendor/gpd/xdplus/proprietary/vendor/etc/selinux/.
