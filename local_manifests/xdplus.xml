@@ -25,10 +25,13 @@
   and the <project> below takes its path. It was patch 0029 until the fork
   existed; that number is retired, not reused.
 
-  ⚠️ Still uncovered: packages/providers/MediaProvider, which carries patch 0028
-  (the microSD setattr EPERM fallback) on a local branch with no fork. Same fix
-  when a fork exists -- remove-project, project, and delete the patch in the
-  same change.
+  packages/providers/MediaProvider is replaced for the same reason: it carries
+  the microSD setattr EPERM fallback. It was patch 0028 until its fork existed;
+  that number is retired too.
+
+  With both of those, every repo this port modifies is either listed here or
+  covered by a numbered patch in device/gpd/xdplus/patches/ -- nothing is left
+  living only on a local branch.
 
   The kernel entry is what makes `TARGET_KERNEL_SOURCE := kernel/gpd/mt8176`
   (BoardConfig.mk, the in-tree kernel build) resolve on a fresh checkout.
@@ -54,6 +57,14 @@
            name="android_packages_apps_Settings"
            remote="keyaku"
            groups="pdk-fs"
+           revision="refs/heads/lineage-18.1" />
+
+  <remove-project name="LineageOS/android_packages_providers_MediaProvider" />
+
+  <project path="packages/providers/MediaProvider"
+           name="android_packages_providers_MediaProvider"
+           remote="keyaku"
+           groups="pdk-cw-fs,pdk-fs"
            revision="refs/heads/lineage-18.1" />
 
   <project path="vendor/gpd/xdplus"
