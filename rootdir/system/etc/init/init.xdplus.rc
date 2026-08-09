@@ -76,22 +76,13 @@ service xdplus-vknotify /system/bin/xdplus_tweaks vknotify
 on property:sys.xdplus.vkcompile=*
     start xdplus-vknotify
 
-# vkshim's persistent pipeline-cache store. Writable by anyone on purpose: the
-# shim runs inside arbitrary (untrusted) app processes and each writes its own
-# <pkg>.pcache here.
-#
-# Sticky, so an app can create and replace its own cache but cannot unlink
-# anyone else's — without it, any app on the device could delete or truncate
-# every other app's shader cache, and SELinux is permissive here so the mode is
-# the only thing standing in the way. Each cache file lands 0600 through the
-# app's own umask, so they are not readable across apps either.
-#
-# The per-app size cap is enforced in-process by the shim; the whole-directory
-# budget cannot be (an app can no longer evict its neighbours), so root does it
-# below at boot and on demand.
-on post-fs-data
-    mkdir /data/vkshim 01777 root root
-    chmod 01777 /data/vkshim
+# vkshim's pipeline caches live inside each app's own sandbox now
+# (/data/user/<user>/<pkg>/cache/vkshim.pcache), so this port creates no shared
+# cache directory. The old sticky /data/vkshim could not work under SELinux
+# enforcement: an app may not create or unlink files outside its sandbox types,
+# and the root daemon that held it under a budget may not write system_data_file.
+# ⚠️ A device upgraded from a build that had it keeps a stale /data/vkshim; it
+# is dead weight, not a hazard, and nothing recreates it.
 
 # Re-apply persisted toggles once the framework is up.
 service xdplus-tweaks-boot /system/bin/xdplus_tweaks boot

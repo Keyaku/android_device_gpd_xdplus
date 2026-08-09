@@ -7,7 +7,7 @@
 #   hdmi_up      mini-HDMI DECOUPLE_MIRROR bringup
 #   hdmi_down    tear HDMI down, return to built-in panel only
 #   boot         re-apply persisted toggles at boot_completed, prune the cache dir
-#   vkcache_prune  hold /data/vkshim under its total budget (root-only work)
+#   vkcache_prune  retired: caches live in each app's own sandbox now
 #   vkcache_clear  delete every shader cache (root-only work)
 
 H=/d/hdmi
@@ -167,42 +167,32 @@ vknotify() {
 		--es pkg "$PKG" --es count "$CNT" --es mode "$MODE" >/dev/null 2>&1
 }
 
-# /data/vkshim is sticky (see init.xdplus.rc), so an app can only unlink its own
-# cache and the Settings menu — running as system, not root — cannot unlink
-# anyone's. Enforcing the whole-directory budget is therefore root's job. The
-# per-app cap still lives in the shim, which only ever touches its own file.
+# Shader caches live in each app's own sandbox now
+# (/data/user/<user>/<pkg>/cache/vkshim.pcache), so there is no shared directory
+# left to hold under a budget: each cache is counted against its own app's
+# storage and is removed with that app's data like any other cache file.
 #
-# Oldest first, because a cache that has not been written in a long time belongs
-# to something the user has not played in a long time.
+# The shared /data/vkshim could not survive SELinux enforcement in either
+# direction -- an app may not create or unlink files outside its sandbox types,
+# and a root daemon may not write or unlink system_data_file -- so both the
+# shim's writes and this prune would have been denied.
 vkcache_prune() {
-	DIR=/data/vkshim
-	[ -d "$DIR" ] || return 0
-	MB="$(getprop persist.sys.xdplus.vkcachedirmax)"
-	case "$MB" in ''|*[!0-9]*) MB=192 ;; esac
-	[ "$MB" -eq 0 ] && MB=192
-	BUDGET=$((MB * 1024 * 1024))
-
-	TOTAL=0
-	for f in "$DIR"/*.pcache; do
-		[ -f "$f" ] || continue
-		TOTAL=$((TOTAL + $(stat -c %s "$f" 2>/dev/null || echo 0)))
-	done
-	[ "$TOTAL" -le "$BUDGET" ] && return 0
-
-	for f in $(ls -rt "$DIR"/*.pcache 2>/dev/null); do
-		[ "$TOTAL" -le "$BUDGET" ] && break
-		SZ=$(stat -c %s "$f" 2>/dev/null) || continue
-		rm -f "$f" || continue
-		TOTAL=$((TOTAL - SZ))
-		xlog "cache dir over ${MB}MB budget, evicted $f ($SZ bytes)"
-	done
+	xlog "vkcache_prune is retired: caches are per-app now, nothing to prune"
 }
 
-# An app keeps its own cache alive until it exits, so this takes effect on the
-# next launch of anything currently running.
+# Caches live inside app sandboxes now, and root cannot delete them there:
+# domain.te neverallows every domain but appdomain and installd from unlinking
+# app_data_file. So the clear is a handshake instead -- bump a generation
+# property, and each app's own shim drops its cache the next time it starts.
+#
+# That matches the old behaviour anyway: an app held its cache open until it
+# exited, so a delete only ever took effect on the next launch.
 vkcache_clear() {
-	rm -f /data/vkshim/*.pcache
-	xlog "shader caches cleared"
+	GEN="$(getprop persist.sys.xdplus.vkcachegen)"
+	case "$GEN" in ''|*[!0-9]*) GEN=0 ;; esac
+	GEN=$((GEN + 1))
+	setprop persist.sys.xdplus.vkcachegen "$GEN"
+	xlog "shader caches marked stale (generation $GEN); each app clears its own on next start"
 }
 
 # No argument means "read the dispatch property yourself".
@@ -228,12 +218,16 @@ CMD="$1"
 #                  and makes a freeze sticky across teardown, a composer restart
 #                  and a full reboot. Shipped default-on once; must not linger.
 #  wifi_standard_11n_fallback  the PHY-mode label fix is unconditional now.
+#  vkcachedirmax   the whole-directory budget is gone with the shared cache
+#                  directory; each cache is per-app and capped by the shim's
+#                  own persist.sys.xdplus.vkcachemax.
 #
 # ⚠️ Append to this list whenever a toggle is retired; do not repurpose a name.
 prune_retired_props() {
 	for p in \
 		persist.sys.xdplus.hdmi_unfreeze \
-		persist.sys.wifi_standard_11n_fallback
+		persist.sys.wifi_standard_11n_fallback \
+		persist.sys.xdplus.vkcachedirmax
 	do
 		if [ -n "$(getprop $p)" ]; then
 			xlog "clearing retired property $p"
