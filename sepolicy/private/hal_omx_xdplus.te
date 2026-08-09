@@ -5,3 +5,7 @@ type hal_omx_xdplus_exec, exec_type, system_file_type, file_type;
 
 init_daemon_domain(hal_omx_xdplus)
 hal_server_domain(hal_omx_xdplus, hal_omx)
+
+# MEASURED: the OMX service is handed buffer handles by the allocator HAL and
+# was denied `use` on its fd.
+hal_client_domain(hal_omx_xdplus, hal_allocator)

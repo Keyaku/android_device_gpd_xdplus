@@ -5,3 +5,15 @@ type xdplus_prop, property_type;
 
 set_prop(system_server, xdplus_prop)
 set_prop(system_app, xdplus_prop)
+
+# MEASURED under enforcing: SurfaceFlinger reads sys.xdplus.* directly (the
+# HDMI bring-up state it is handed), and the toolbox domain -- init's own
+# getprop/setprop -- reads them from init.xdplus.rc.
+get_prop(surfaceflinger, xdplus_prop)
+get_prop(toolbox, xdplus_prop)
+
+# vkshim is loaded inside every app process that uses Vulkan, and reads its own
+# switches (persist.sys.xdplus.vkcachemax and friends) from there -- MEASURED as
+# an untrusted_app denial during a PPSSPP run under enforcing. Read-only: apps
+# never set these.
+get_prop(appdomain, xdplus_prop)
