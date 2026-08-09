@@ -8,7 +8,8 @@
 // On top of the big stack, two quality-of-life layers:
 //  1. Persistent pipeline cache: with the overflow fixed, compiles complete but
 //     can take minutes (the recursion is merely survivable, not fast). The shim
-//     keeps its own VkPipelineCache primed from /data/vkshim/<pkg>.pcache,
+//     keeps its own VkPipelineCache primed from the calling app's own cache
+//     directory (/data/user/<user>/<pkg>/cache/vkshim.pcache),
 //     substitutes it when the app passes VK_NULL_HANDLE, merges app-provided
 //     caches into it after each batch, and persists it back — so only the first
 //     run of a given shader set pays the compile cost.
@@ -55,7 +56,14 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 #define COMPILE_STACK_SIZE (64u * 1024u * 1024u)
-#define CACHE_DIR "/data/vkshim"
+#define CACHE_FILE "vkshim.pcache"
+#define CACHE_GEN_FILE "vkshim.gen"
+// Bumped by the Settings menu's "clear shader caches" action. Each process
+// compares it against the generation stamped beside its own cache and deletes
+// the cache when they differ -- the only way to clear a cache that lives inside
+// an app sandbox, since SELinux lets nothing but the app itself and installd
+// unlink app_data_file.
+#define CACHE_GEN_PROP "persist.sys.xdplus.vkcachegen"
 #define PROGRESS_PROP "sys.xdplus.vkcompile"
 // A single batch slower than this marks the whole session as worth notifying.
 #define SLOW_NS (2ull * 1000000000ull)
@@ -72,9 +80,14 @@
 // GPD XD+ Settings menu writes) with debug.xdplus.vkcachemax as a
 // non-persistent override for A/B testing without touching the user's setting.
 //
-// The whole-directory budget is NOT enforced here. /data/vkshim is sticky, so
-// this process can only unlink its own cache — evicting a neighbour's is root's
-// job, done by xdplus_tweaks.sh at boot and on demand (persist.sys.xdplus.vkcachedirmax).
+// There is no whole-directory budget any more, and none is needed: each cache
+// lives inside its own app's sandbox, so it is counted against that app's
+// storage and goes away with the app's data like any other cache file. The
+// shared /data/vkshim directory it used to live in could not survive SELinux
+// enforcement in either direction — an app may not create or unlink files
+// outside its sandbox types (app_neverallows.te), and a root daemon may not
+// write or unlink system_data_file (domain.te), so both the writes and the
+// budget prune would have been denied.
 //
 // Over the per-package limit the file is frozen at its last good size rather
 // than reset: the alternative is throwing away every compiled pipeline and
@@ -291,6 +304,69 @@ static unsigned long long now_ns(void) {
 	return (unsigned long long)ts.tv_sec * 1000000000ull + ts.tv_nsec;
 }
 
+// Where this process's pipeline cache lives: inside its own app sandbox, at
+// /data/user/<user>/<pkg>/cache/vkshim.pcache.
+//
+// It used to be a shared /data/vkshim/<pkg>.pcache, which cannot work under
+// SELinux enforcement (see the CACHE_MAX_MB comment). The sandbox path needs no
+// policy of its own: an app already owns its cache directory, and the directory
+// is guaranteed to exist for any installed app.
+//
+// Returns 0 when this process has no sandbox to write into — anything below the
+// first app uid (SurfaceFlinger, bootanim and friends) and isolated processes,
+// which are denied their own data dir. Those keep an in-memory cache for the
+// life of the process and simply do not persist it; they compile a handful of
+// pipelines, not a game's worth.
+#define AID_APP_START 10000
+#define AID_USER_OFFSET 100000
+#define AID_ISOLATED_START 99000
+
+static const char *pkg_name(void);
+
+static int cache_path_for_self(char *out, size_t len) {
+	uid_t uid = getuid();
+	uid_t appid = uid % AID_USER_OFFSET;
+	if (appid < AID_APP_START || appid >= AID_ISOLATED_START) return 0;
+	snprintf(out, len, "/data/user/%u/%s/cache/" CACHE_FILE,
+		 (unsigned)(uid / AID_USER_OFFSET), pkg_name());
+	return 1;
+}
+
+// "Clear shader caches" reaches an app sandbox the only way it can: the menu
+// bumps a generation property, and each process deletes its own cache the next
+// time it starts if the stamp beside the cache does not match. Root cannot do
+// this itself -- domain.te neverallows every domain but appdomain and installd
+// from unlinking app_data_file.
+//
+// Takes effect on the next launch of anything already running, which is what
+// the root-side delete did too: an app holds its cache open until it exits.
+static void drop_cache_if_stale(void) {
+	char gen[PROP_VALUE_MAX] = {0};
+	__system_property_get(CACHE_GEN_PROP, gen);
+	if (!gen[0]) return;
+
+	char gen_path[sizeof(cache_path)];
+	size_t n = strlen(cache_path) - (sizeof(CACHE_FILE) - 1);
+	snprintf(gen_path, sizeof(gen_path), "%.*s" CACHE_GEN_FILE, (int)n, cache_path);
+
+	char stamp[PROP_VALUE_MAX] = {0};
+	int fd = open(gen_path, O_RDONLY);
+	if (fd >= 0) {
+		ssize_t r = read(fd, stamp, sizeof(stamp) - 1);
+		if (r > 0) stamp[r] = '\0';
+		close(fd);
+	}
+	if (!strcmp(stamp, gen)) return;
+
+	if (unlink(cache_path) == 0)
+		LOGI("shader cache cleared (generation %s)", gen);
+	fd = open(gen_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd >= 0) {
+		(void)!write(fd, gen, strlen(gen));
+		close(fd);
+	}
+}
+
 static const char *pkg_name(void) {
 	static char pkg[96];
 	if (!pkg[0]) {
@@ -357,11 +433,19 @@ static VkPipelineCache ensure_disk_cache(VkDevice dev) {
 	resolve_cache_fns(dev);
 	if (!real_cpc || !real_gpcd) return VK_NULL_HANDLE;
 
-	snprintf(cache_path, sizeof(cache_path), CACHE_DIR "/%s.pcache", pkg_name());
+	if (cache_path_for_self(cache_path, sizeof(cache_path)))
+		drop_cache_if_stale();
+	if (!cache_path[0]) {
+		// No sandbox to persist into: run the cache in memory only. Every
+		// path below that touches the file is guarded on cache_path[0].
+		cache_path[0] = '\0';
+		LOGI("no app sandbox for uid %u — pipeline cache stays in memory",
+		     (unsigned)getuid());
+	}
 	cache_frozen = 0;
 	void *initial = NULL;
 	size_t initial_size = 0;
-	int fd = open(cache_path, O_RDONLY);
+	int fd = cache_path[0] ? open(cache_path, O_RDONLY) : -1;
 	if (fd >= 0) {
 		struct stat st;
 		if (fstat(fd, &st) == 0 && st.st_size > 0) {
@@ -391,7 +475,8 @@ static VkPipelineCache ensure_disk_cache(VkDevice dev) {
 	disk_cache = pc;
 	last_saved_size = initial_size;
 	last_save_ns = now_ns();
-	LOGI("pipeline cache ready (%s, primed %zu bytes)", cache_path, initial_size);
+	LOGI("pipeline cache ready (%s, primed %zu bytes)",
+	     cache_path[0] ? cache_path : "memory only", initial_size);
 	return pc;
 }
 
@@ -560,7 +645,7 @@ static VkResult compile_batch(void *(*fn)(void *), void *args, VkResult *slot,
 	} else if (app_cache != VK_NULL_HANDLE) {
 		// The app brought its own cache, so the batch compiled into that and our
 		// persistent cache learned nothing. Measured live: SwanStation supplies a
-		// cache, so /data/vkshim/<pkg>.pcache stayed at its 36-byte empty header
+		// cache, so the persistent cache file stayed at its 36-byte empty header
 		// through two full compile storms and every launch paid full price.
 		//
 		// ⚠️ Still OFF by default (debug.xdplus.vkcacheharvest=1 to enable) —

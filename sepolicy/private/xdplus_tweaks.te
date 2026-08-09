@@ -80,12 +80,8 @@ allow system_server xdplus_tweaks:fd use;
 allow surfaceflinger xdplus_tweaks:fifo_file { read write getattr };
 allow system_server xdplus_tweaks:fifo_file { read write getattr };
 
-# The read side of /data/vkshim is granted so the budget pass can still measure
-# and log what it would evict; only the write and unlink halves are refused.
-allow xdplus_tweaks system_data_file:dir { search open read getattr };
-allow xdplus_tweaks system_data_file:file getattr;
-
-# ⚠️ The /data/vkshim prune is NOT granted, and cannot be -- see the comment in
-# xdplus_files.te. Under enforcement the boot pass will fail to evict caches and
-# the directory grows unbounded until vkshim's cache layout is changed. The
-# script's other boot work (retired-property pruning) is unaffected.
+# ⚠️ vkcache_clear needs NO file access at all, and could not have it: shader
+# caches live inside app sandboxes now, and domain.te neverallows every domain
+# but appdomain and installd from unlinking app_data_file. The action bumps
+# persist.sys.xdplus.vkcachegen instead and each app's own shim drops its cache
+# on the next start -- which is set_prop(xdplus_prop), already granted above.
