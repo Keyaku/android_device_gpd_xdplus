@@ -706,7 +706,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 // has no way to know the shim is a second user of its cache.
 //
 // cache_mu is never held across a compile (see cache_mu), so these add no
-// contention to the path that ANR'd in §139 — only to the short bookkeeping.
+// contention to the pipeline-compile path that ANR'd — only to the short
+// bookkeeping.
 static VKAPI_ATTR VkResult VKAPI_CALL shim_MergePipelineCaches(
 	VkDevice dev, VkPipelineCache dst, uint32_t n, const VkPipelineCache *src) {
 	pthread_mutex_lock(&cache_mu);

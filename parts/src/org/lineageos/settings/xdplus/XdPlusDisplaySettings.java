@@ -1,7 +1,7 @@
 /*
  * GPD XD+ → Display output. mini-HDMI bring-up and teardown, plus the knobs the
- * bring-up recipe depends on. See PORTING_LOG (mini-HDMI out) for what each
- * property drives.
+ * bring-up recipe depends on. Each property is documented at its use site in
+ * the HDMI bring-up script and in the display HAL shim.
  */
 
 package org.lineageos.settings.xdplus;
