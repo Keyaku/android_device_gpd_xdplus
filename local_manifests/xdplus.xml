@@ -30,7 +30,7 @@
   that number is retired too.
 
   With both of those, every repo this port modifies is either listed here or
-  covered by a numbered patch in device/gpd/xdplus/patches/ -- nothing is left
+  covered by a numbered patch in device/gpd/xdplus/patches/; nothing is left
   living only on a local branch.
 
   The kernel entry is what makes `TARGET_KERNEL_SOURCE := kernel/gpd/mt8176`
