@@ -1,0 +1,685 @@
+From 3e914e4000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 9 Aug 2026 12:00:00 +0100
+Subject: [PATCH] Settings: add the GPD XD+ device menu
+
+The port needs a place to expose device-specific runtime switches, and the
+ones it has are not settings any Android release has a home for: mini-HDMI
+bring-up knobs for a path the vendor composer never drives on its own, and
+the limits and wipe action for the Vulkan shader cache the graphics shim
+keeps.
+
+Everything here is property-only by design. The menu writes sys.xdplus.*
+and persist.sys.xdplus.* and nothing else; the privileged work behind a
+momentary action is done by an init service that watches those properties.
+That is what lets the menu keep working with SELinux enforcing, where an
+app-side file write or a direct service call would need policy of its own.
+
+Three pages, each with its own fragment:
+
+  * Display out         mini-HDMI resolution, vsync pacing, forced
+                        validate, and the up/down actions. Labelled
+                        experimental, because the built-in panel does not
+                        render correctly while mirroring.
+  * Vulkan shader cache per-app cache limit, a clear action, and the
+                        shader-compile progress notification mode.
+  * Top level           the group index, plus the receiver that turns
+                        compile progress into a notification or a toast.
+
+Squashed from the twelve commits on the xdplus-tweaks-menu branch: this is
+one subject, and the intermediate states are not interesting to a fresh
+checkout.
+---
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index 3591538..4f0178f 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -3453,6 +3453,12 @@
+             </intent-filter>
+         </activity>
+ 
++        <!-- GPD XD+ port: vkshim shader-compile progress relay target. Not
++             exported; init.xdplus.rc reaches it with a root explicit-component
++             broadcast (root passes checkComponentPermission). -->
++        <receiver android:name=".gpd.VkCompileReceiver"
++                  android:exported="false" />
++
+         <!-- This is the longest AndroidManifest.xml ever. -->
+     </application>
+ </manifest>
+diff --git a/res/values/gpd_xdplus_strings.xml b/res/values/gpd_xdplus_strings.xml
+new file mode 100644
+index 0000000..b653188
+--- /dev/null
++++ b/res/values/gpd_xdplus_strings.xml
+@@ -0,0 +1,100 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- GPD XD+ device tweaks menu. Kept in a device-specific file so the port's
++     strings never collide with upstream Settings translation churn. -->
++<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
++
++    <string name="gpd_xdplus_title" translatable="false">GPD XD+</string>
++    <string name="gpd_xdplus_summary" translatable="false">HDMI output, Vulkan shader cache, crash dialogs</string>
++    <string name="gpd_xdplus_cat_display" translatable="false">Display out (experimental)</string>
++
++    <string name="xdplus_hdmi_up_title" translatable="false">Bring up HDMI mirror</string>
++    <string name="xdplus_hdmi_up_summary" translatable="false">Starts mirroring to the mini-HDMI port. Requires \"HDMI mirror mode\" turned on and a reboot since turning it on, with the screen unlocked. Takes about 30 seconds. If nothing appears, use \"Tear down HDMI\" and try again.</string>
++    <string name="xdplus_hdmi_up_toast" translatable="false">Bringing up HDMI mirror… (~30s)</string>
++    <string name="xdplus_hdmi_down_title" translatable="false">Tear down HDMI</string>
++    <string name="xdplus_hdmi_down_summary" translatable="false">Stop HDMI output and go back to the built-in screen only. Also the way out if a bring-up leaves the picture wrong.</string>
++    <string name="xdplus_hdmi_down_toast" translatable="false">Tearing down HDMI…</string>
++
++
++    <string name="xdplus_hdmi_mirror_mode_title" translatable="false">HDMI mirror mode</string>
++    <string name="xdplus_hdmi_mirror_mode_summary" translatable="false">Required for mirroring, and must be on before the HDMI cable is plugged in. Takes effect after a reboot — turning it on now does nothing until you restart. (Disables the external-display forced validate, which conflicts with mirroring.)</string>
++
++    <string name="xdplus_hdmi_novsync_title" translatable="false">Loosen mirror frame pacing</string>
++    <string name="xdplus_hdmi_novsync_summary" translatable="false">Try this if the mirrored picture stutters. Applied at the next HDMI bring-up, not straight away. (Stops the composer pacing external frames on vsync.)</string>
++
++    <string name="xdplus_hdmi_res_title" translatable="false">HDMI resolution</string>
++
++    <!-- Non-selectable banner at the top of the Display out page. HDMI mirror
++         works and is user-verified, but bring-up depends on several conditions
++         holding together and the built-in panel can come back wrong until
++         teardown — so the page says so rather than looking like a finished
++         feature. -->
++    <string name="xdplus_hdmi_experimental_title" translatable="false">Experimental feature</string>
++    <string name="xdplus_hdmi_experimental_summary" translatable="false">Mirroring to an external screen works, but it is not finished: bring-up can fail, and the built-in screen may show a doubled or discoloured picture until you tear it down. Nothing here damages the device — worst case, reboot.</string>
++
++
++    <string name="xdplus_hide_error_dialogs_title" translatable="false">Hide app crash dialogs</string>
++    <string name="xdplus_hide_error_dialogs_summary" translatable="false">Suppress \"app has stopped\" popups (useful for kiosk / handheld use).</string>
++
++    <string name="xdplus_vknotify_title" translatable="false">Shader compile notification</string>
++    <string name="xdplus_vkcompile_channel" translatable="false">Vulkan shader compilation</string>
++    <string name="xdplus_vkcompile_title" translatable="false">Compiling Vulkan shaders…</string>
++    <string name="xdplus_vkcompile_text" translatable="false">%1$s — %2$s pipelines done. First run per game is slow; later runs use the cache.</string>
++
++    <string-array name="xdplus_vknotify_entries" translatable="false">
++        <item>Notification with progress</item>
++        <item>Toast popups</item>
++        <item>Off</item>
++    </string-array>
++    <string-array name="xdplus_vknotify_values" translatable="false">
++        <item>notification</item>
++        <item>toast</item>
++        <item>off</item>
++    </string-array>
++
++    <!-- Landing-page summaries: say what is behind each entry, since the page
++         is now three doors rather than three headings. -->
++    <string name="gpd_xdplus_cat_display_summary" translatable="false">Experimental — mini-HDMI output: start and stop, mirroring, resolution</string>
++    <string name="gpd_xdplus_cat_shadercache_summary" translatable="false">Storage used by compiled game shaders, and how much to allow</string>
++
++    <string name="gpd_xdplus_cat_shadercache" translatable="false">Vulkan shader cache</string>
++
++    <string name="xdplus_vkcachemax_title" translatable="false">Shader cache limit per app</string>
++    <string name="xdplus_vkcache_clear_title" translatable="false">Clear shader cache</string>
++    <string name="xdplus_vkcache_clear_summary" translatable="false">Clear every cached shader. Each game clears its own the next time you start it, then recompiles its shaders once — slow that one time, fast again afterwards.</string>
++    <string name="xdplus_vkcache_clear_toast" translatable="false">Shader caches will clear the next time each game starts</string>
++    <!-- %1$s is the chosen limit. There is deliberately no "in use" figure:
++         each cache lives inside its own app's sandbox now, which Settings
++         cannot read. -->
++    <string name="xdplus_vkcache_summary" translatable="false">%1$s per app</string>
++
++    <!-- A shader cache trades storage for load time: shaders in it are not
++         recompiled. It only ever grows (the driver blob gives no way to evict a
++         single entry), so it is capped and frozen once full rather than reset,
++         which would throw away every shader at once. -->
++    <string-array name="xdplus_vkcache_entries" translatable="false">
++        <item>32 MB</item>
++        <item>64 MB (Recommended)</item>
++        <item>128 MB</item>
++        <item>256 MB</item>
++    </string-array>
++    <string-array name="xdplus_vkcache_values" translatable="false">
++        <item>32</item>
++        <item>64</item>
++        <item>128</item>
++        <item>256</item>
++    </string-array>
++
++    <!-- Sorted high -> low. 720p60 is the only latch-stable mode (HDMI out is
++         experimental), so it carries the Recommended tag. Values: 1=1080, 2=720, 0=480. -->
++    <string-array name="xdplus_hdmi_res_entries" translatable="false">
++        <item>1080p60</item>
++        <item>720p60 (Recommended)</item>
++        <item>480p60</item>
++    </string-array>
++    <string-array name="xdplus_hdmi_res_values" translatable="false">
++        <item>1</item>
++        <item>2</item>
++        <item>0</item>
++    </string-array>
++
++</resources>
+diff --git a/res/xml/gpd_xdplus_display_settings.xml b/res/xml/gpd_xdplus_display_settings.xml
+new file mode 100644
+index 0000000..1dd2baf
+--- /dev/null
++++ b/res/xml/gpd_xdplus_display_settings.xml
+@@ -0,0 +1,46 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- GPD XD+ → Display output. Toggles set sys.xdplus.*/persist.sys.xdplus.*
++     props; init.xdplus.rc dispatches the privileged work. -->
++<PreferenceScreen
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    android:key="gpd_xdplus_display_settings"
++    android:title="@string/gpd_xdplus_cat_display">
++
++    <!-- Banner, not a control: HDMI mirror works but is not finished, and the
++         page should say so before the first tappable entry rather than letting
++         it read as a shipped feature. -->
++    <Preference
++        android:key="xdplus_hdmi_experimental"
++        android:title="@string/xdplus_hdmi_experimental_title"
++        android:summary="@string/xdplus_hdmi_experimental_summary"
++        android:selectable="false"
++        android:persistent="false" />
++
++    <Preference
++        android:key="xdplus_hdmi_up"
++        android:title="@string/xdplus_hdmi_up_title"
++        android:summary="@string/xdplus_hdmi_up_summary" />
++
++    <Preference
++        android:key="xdplus_hdmi_down"
++        android:title="@string/xdplus_hdmi_down_title"
++        android:summary="@string/xdplus_hdmi_down_summary" />
++
++    <SwitchPreference
++        android:key="xdplus_hdmi_mirror_mode"
++        android:title="@string/xdplus_hdmi_mirror_mode_title"
++        android:summary="@string/xdplus_hdmi_mirror_mode_summary" />
++
++    <SwitchPreference
++        android:key="xdplus_hdmi_novsync"
++        android:title="@string/xdplus_hdmi_novsync_title"
++        android:summary="@string/xdplus_hdmi_novsync_summary" />
++
++    <ListPreference
++        android:key="xdplus_hdmi_res"
++        android:title="@string/xdplus_hdmi_res_title"
++        android:entries="@array/xdplus_hdmi_res_entries"
++        android:entryValues="@array/xdplus_hdmi_res_values"
++        android:defaultValue="2" />
++
++</PreferenceScreen>
+diff --git a/res/xml/gpd_xdplus_settings.xml b/res/xml/gpd_xdplus_settings.xml
+new file mode 100644
+index 0000000..fde0202
+--- /dev/null
++++ b/res/xml/gpd_xdplus_settings.xml
+@@ -0,0 +1,30 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- GPD XD+ device tweaks — landing page. Each entry opens a sub-page; the
++     groups had nothing to do with one another and did not belong on one scroll.
++     Every fragment named here must also be in SettingsGateway.ENTRY_FRAGMENTS. -->
++<PreferenceScreen
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    android:key="gpd_xdplus_settings"
++    android:title="@string/gpd_xdplus_title">
++
++    <Preference
++        android:key="gpd_xdplus_cat_display"
++        android:title="@string/gpd_xdplus_cat_display"
++        android:summary="@string/gpd_xdplus_cat_display_summary"
++        android:fragment="com.android.settings.gpd.GpdXdPlusDisplaySettings" />
++
++    <Preference
++        android:key="gpd_xdplus_cat_shadercache"
++        android:title="@string/gpd_xdplus_cat_shadercache"
++        android:summary="@string/gpd_xdplus_cat_shadercache_summary"
++        android:fragment="com.android.settings.gpd.GpdXdPlusShaderCacheSettings" />
++
++    <!-- A single handheld preference, not a category: it was the only thing
++         left on the old "Experimental patches" page that anyone would set on
++         purpose, and it is neither experimental nor a patch. -->
++    <SwitchPreference
++        android:key="xdplus_hide_error_dialogs"
++        android:title="@string/xdplus_hide_error_dialogs_title"
++        android:summary="@string/xdplus_hide_error_dialogs_summary" />
++
++</PreferenceScreen>
+diff --git a/res/xml/gpd_xdplus_shadercache_settings.xml b/res/xml/gpd_xdplus_shadercache_settings.xml
+new file mode 100644
+index 0000000..016af61
+--- /dev/null
++++ b/res/xml/gpd_xdplus_shadercache_settings.xml
+@@ -0,0 +1,30 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- GPD XD+ → Vulkan shader cache. Limits are read by the Vulkan shim
++     (device/gpd/xdplus/vulkan/vkshim.c) from persist.sys.xdplus.vkcache*. -->
++<PreferenceScreen
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    android:key="gpd_xdplus_shadercache_settings"
++    android:title="@string/gpd_xdplus_cat_shadercache">
++
++    <ListPreference
++        android:key="xdplus_vkcachemax"
++        android:title="@string/xdplus_vkcachemax_title"
++        android:entries="@array/xdplus_vkcache_entries"
++        android:entryValues="@array/xdplus_vkcache_values"
++        android:defaultValue="64" />
++
++    <Preference
++        android:key="xdplus_vkcache_clear"
++        android:title="@string/xdplus_vkcache_clear_title"
++        android:summary="@string/xdplus_vkcache_clear_summary" />
++
++    <!-- Moved here from the old Experimental page: it reports shader compile
++         progress, so it belongs with the cache that makes compiles rare. -->
++    <ListPreference
++        android:key="xdplus_vknotify"
++        android:title="@string/xdplus_vknotify_title"
++        android:entries="@array/xdplus_vknotify_entries"
++        android:entryValues="@array/xdplus_vknotify_values"
++        android:defaultValue="notification" />
++
++</PreferenceScreen>
+diff --git a/res/xml/top_level_settings.xml b/res/xml/top_level_settings.xml
+index 367f426..27d609a 100644
+--- a/res/xml/top_level_settings.xml
++++ b/res/xml/top_level_settings.xml
+@@ -64,6 +64,14 @@
+         android:fragment="com.android.settings.DisplaySettings"
+         settings:controller="com.android.settings.display.TopLevelDisplayPreferenceController"/>
+ 
++    <Preference
++        android:key="top_level_gpd_xdplus"
++        android:title="@string/gpd_xdplus_title"
++        android:summary="@string/gpd_xdplus_summary"
++        android:icon="@drawable/ic_homepage_display"
++        android:order="-75"
++        android:fragment="com.android.settings.gpd.GpdXdPlusSettings"/>
++
+     <Preference
+         android:key="top_level_sound"
+         android:title="@string/sound_settings"
+diff --git a/src/com/android/settings/core/gateway/SettingsGateway.java b/src/com/android/settings/core/gateway/SettingsGateway.java
+index ad4da08..bd17a6e 100644
+--- a/src/com/android/settings/core/gateway/SettingsGateway.java
++++ b/src/com/android/settings/core/gateway/SettingsGateway.java
+@@ -167,6 +167,9 @@ public class SettingsGateway {
+      * security exception if the fragment it needs to display is not in this list.
+      */
+     public static final String[] ENTRY_FRAGMENTS = {
++            com.android.settings.gpd.GpdXdPlusSettings.class.getName(),
++            com.android.settings.gpd.GpdXdPlusDisplaySettings.class.getName(),
++            com.android.settings.gpd.GpdXdPlusShaderCacheSettings.class.getName(),
+             AdvancedConnectedDeviceDashboardFragment.class.getName(),
+             CreateShortcut.class.getName(),
+             WifiSettings.class.getName(),
+diff --git a/src/com/android/settings/gpd/GpdXdPlusDisplaySettings.java b/src/com/android/settings/gpd/GpdXdPlusDisplaySettings.java
+new file mode 100644
+index 0000000..ee4c9bd
+--- /dev/null
++++ b/src/com/android/settings/gpd/GpdXdPlusDisplaySettings.java
+@@ -0,0 +1,73 @@
++/*
++ * GPD XD+ → Display output. mini-HDMI bring-up and teardown, plus the knobs the
++ * bring-up recipe depends on. See PORTING_LOG (mini-HDMI out) for what each
++ * property drives.
++ */
++
++package com.android.settings.gpd;
++
++import android.os.Bundle;
++import android.os.SystemProperties;
++
++import androidx.preference.Preference;
++import androidx.preference.SwitchPreference;
++
++import com.android.settings.R;
++
++public class GpdXdPlusDisplaySettings extends XdPlusFragmentBase {
++
++    private static final String KEY_HDMI_UP = "xdplus_hdmi_up";
++    private static final String KEY_HDMI_DOWN = "xdplus_hdmi_down";
++    private static final String KEY_HDMI_MIRROR_MODE = "xdplus_hdmi_mirror_mode";
++    private static final String KEY_HDMI_RES = "xdplus_hdmi_res";
++    private static final String KEY_HDMI_NOVSYNC = "xdplus_hdmi_novsync";
++
++    // SurfaceFlinger reads this once at startup: 1 = forced validate for
++    // external displays (plain extension mode), 0 = mirror-capable. The toggle
++    // is therefore reboot-to-apply, and its sense is inverted here
++    // ("mirror mode" checked == prop 0).
++    private static final String PROP_HDMI_FORCE_VALIDATE =
++            "persist.sys.xdplus.hdmi_force_validate";
++    private static final String PROP_HDMI_RES = "persist.sys.xdplus.hdmi_res";
++    // Read by xdplus_tweaks.sh during hdmi_up (not applied live).
++    private static final String PROP_HDMI_NOVSYNC = "persist.sys.xdplus.hdmi_novsync";
++    // Read by PhoneWindowManager on every F12 (the spare "Gamepad Mapper"
++    // button): when armed, that button bounces the display off/on to recover a
++    // frozen pipeline. Applied live — the policy reads it per press.
++
++    @Override
++    public void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        addPreferencesFromResource(R.xml.gpd_xdplus_display_settings);
++
++        // Inverted sense: checked == hdmi_force_validate 0 == mirror-capable.
++        // SF only reads the prop at startup, so this takes effect on reboot; the
++        // summary says so and hdmi_up refuses with a log if run before one.
++        final SwitchPreference mirrorMode =
++                (SwitchPreference) findPreference(KEY_HDMI_MIRROR_MODE);
++        mirrorMode.setChecked(
++                "0".equals(SystemProperties.get(PROP_HDMI_FORCE_VALIDATE, "1")));
++        mirrorMode.setOnPreferenceChangeListener((p, v) -> {
++            SystemProperties.set(PROP_HDMI_FORCE_VALIDATE, ((Boolean) v) ? "0" : "1");
++            return true;
++        });
++
++        // Consumed by the bring-up script, so there is nothing to poke here.
++        bindSwitch(KEY_HDMI_NOVSYNC, PROP_HDMI_NOVSYNC);
++        bindList(KEY_HDMI_RES, PROP_HDMI_RES, "2");
++    }
++
++    @Override
++    public boolean onPreferenceTreeClick(Preference preference) {
++        final String key = preference.getKey();
++        if (KEY_HDMI_UP.equals(key)) {
++            dispatch("hdmi_up", R.string.xdplus_hdmi_up_toast);
++            return true;
++        }
++        if (KEY_HDMI_DOWN.equals(key)) {
++            dispatch("hdmi_down", R.string.xdplus_hdmi_down_toast);
++            return true;
++        }
++        return super.onPreferenceTreeClick(preference);
++    }
++}
+diff --git a/src/com/android/settings/gpd/GpdXdPlusSettings.java b/src/com/android/settings/gpd/GpdXdPlusSettings.java
+new file mode 100644
+index 0000000..dad129f
+--- /dev/null
++++ b/src/com/android/settings/gpd/GpdXdPlusSettings.java
+@@ -0,0 +1,45 @@
++/*
++ * GPD XD+ device tweaks — the landing page for this port's runtime toggles.
++ *
++ * Two doors plus one switch. The flat version had grown to three unrelated
++ * groups on one scroll, so it was split; the "Experimental patches" door was
++ * later dropped because it had nothing experimental left on it -- the Wi-Fi
++ * standard label became unconditional, the shader-compile notification moved
++ * next to the shader cache, and hiding crash dialogs is an ordinary handheld
++ * preference, so it sits here directly.
++ *
++ * Every sub-page must also be listed in SettingsGateway.ENTRY_FRAGMENTS or
++ * SettingsActivity refuses to open it.
++ */
++
++package com.android.settings.gpd;
++
++import android.os.Bundle;
++import android.provider.Settings;
++
++import androidx.preference.SwitchPreference;
++
++import com.android.settings.R;
++
++public class GpdXdPlusSettings extends XdPlusFragmentBase {
++
++    private static final String KEY_HIDE_ERROR_DIALOGS = "xdplus_hide_error_dialogs";
++
++    @Override
++    public void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        addPreferencesFromResource(R.xml.gpd_xdplus_settings);
++
++        // Settings.Global rather than a system property, so it is applied
++        // directly here instead of being dispatched through init.
++        final SwitchPreference hideErr =
++                (SwitchPreference) findPreference(KEY_HIDE_ERROR_DIALOGS);
++        hideErr.setChecked(Settings.Global.getInt(getContentResolver(),
++                Settings.Global.HIDE_ERROR_DIALOGS, 0) != 0);
++        hideErr.setOnPreferenceChangeListener((p, v) -> {
++            Settings.Global.putInt(getContentResolver(),
++                    Settings.Global.HIDE_ERROR_DIALOGS, ((Boolean) v) ? 1 : 0);
++            return true;
++        });
++    }
++}
+diff --git a/src/com/android/settings/gpd/GpdXdPlusShaderCacheSettings.java b/src/com/android/settings/gpd/GpdXdPlusShaderCacheSettings.java
+new file mode 100644
+index 0000000..c089d36
+--- /dev/null
++++ b/src/com/android/settings/gpd/GpdXdPlusShaderCacheSettings.java
+@@ -0,0 +1,91 @@
++/*
++ * GPD XD+ → Vulkan shader cache.
++ *
++ * The Vulkan shim (device/gpd/xdplus/vulkan/vkshim.c) keeps a pipeline cache per
++ * app so a game only pays its shader compile once. A pipeline cache blob is
++ * opaque, so entries cannot be evicted individually and the file only ever
++ * grows — hence a per-app limit and a way to wipe it. The shim freezes a cache
++ * at its last good size once the next write would cross the limit, rather than
++ * resetting it, which would throw away every compiled shader at once.
++ *
++ * Each cache lives inside its own app's sandbox
++ * (/data/user/<user>/<pkg>/cache/vkshim.pcache), which has two consequences for
++ * this page. There is no all-apps limit any more — the platform's own low-space
++ * cache reclaim is what bounds the total — and Settings, running as system
++ * rather than as each app, can neither size nor delete those files. So the
++ * summaries report the chosen limit only, and "clear" is a request the shims
++ * honour themselves on their next start.
++ */
++
++package com.android.settings.gpd;
++
++import android.os.Bundle;
++import android.os.SystemProperties;
++import android.widget.Toast;
++
++import androidx.preference.ListPreference;
++import androidx.preference.Preference;
++
++import com.android.settings.R;
++
++public class GpdXdPlusShaderCacheSettings extends XdPlusFragmentBase {
++
++    private static final String KEY_VKCACHE_MAX = "xdplus_vkcachemax";
++    private static final String KEY_VKCACHE_CLEAR = "xdplus_vkcache_clear";
++    private static final String KEY_VKNOTIFY = "xdplus_vknotify";
++
++    // In MB, and takes effect on the next launch of the app concerned.
++    private static final String PROP_VKCACHE_MAX = "persist.sys.xdplus.vkcachemax";
++    private static final String ACTION_CLEAR = "vkcache_clear";
++    // Read by xdplus_tweaks.sh vknotify (and double-checked by VkCompileReceiver).
++    private static final String PROP_VKNOTIFY = "persist.sys.xdplus.vknotify";
++
++    @Override
++    public void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        addPreferencesFromResource(R.xml.gpd_xdplus_shadercache_settings);
++
++        bindList(KEY_VKNOTIFY, PROP_VKNOTIFY, "notification");
++
++        setUpCacheLimit(KEY_VKCACHE_MAX, PROP_VKCACHE_MAX, "64");
++    }
++
++    @Override
++    public boolean onPreferenceTreeClick(Preference preference) {
++        if (KEY_VKCACHE_CLEAR.equals(preference.getKey())) {
++            clearShaderCache();
++            return true;
++        }
++        return super.onPreferenceTreeClick(preference);
++    }
++
++    // A list of MB values; the summary repeats the choice. It used to add "N in
++    // use now", which is no longer readable from here — the caches sit in app
++    // sandboxes.
++    private void setUpCacheLimit(String key, String prop, String def) {
++        final ListPreference pref = bindList(key, prop, def);
++        pref.setOnPreferenceChangeListener((p, v) -> {
++            SystemProperties.set(prop, (String) v);
++            pref.setValue((String) v);
++            updateCacheSummary(pref);
++            return true;
++        });
++        updateCacheSummary(pref);
++    }
++
++    private void updateCacheSummary(ListPreference pref) {
++        pref.setSummary(getString(R.string.xdplus_vkcache_summary, pref.getEntry()));
++    }
++
++    // Nothing here can delete another app's cache: SELinux allows only the app
++    // itself and installd to unlink app_data_file, and root is no exception.
++    // The clear is a handshake instead — xdplus_tweaks bumps a generation
++    // property and each shim drops its own cache when it next starts. An app
++    // already running keeps its copy until it exits, which was true of the old
++    // root-side delete too.
++    private void clearShaderCache() {
++        SystemProperties.set(PROP_ACTION, ACTION_CLEAR);
++        Toast.makeText(getContext(), R.string.xdplus_vkcache_clear_toast,
++                Toast.LENGTH_LONG).show();
++    }
++}
+diff --git a/src/com/android/settings/gpd/VkCompileReceiver.java b/src/com/android/settings/gpd/VkCompileReceiver.java
+new file mode 100644
+index 0000000..2a870fd
+--- /dev/null
++++ b/src/com/android/settings/gpd/VkCompileReceiver.java
+@@ -0,0 +1,68 @@
++/*
++ * GPD XD+ Vulkan shader-compile progress surface.
++ *
++ * The vkshim Vulkan HAL interposer publishes "<pkg>:<count>" on the momentary
++ * sys.xdplus.vkcompile property while a slow pipeline compile is running (the
++ * DDK 1.9 USC compiler can take minutes per shader on this GPU). init.xdplus.rc
++ * relays each update here as a root explicit-component broadcast; this receiver
++ * shows either an indeterminate-progress notification (updated in place, auto-
++ * timing out 30 s after the last update — the shim cannot know when the last
++ * batch is done) or a rate-limited toast, per persist.sys.xdplus.vknotify.
++ */
++
++package com.android.settings.gpd;
++
++import android.app.Notification;
++import android.app.NotificationChannel;
++import android.app.NotificationManager;
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.os.SystemClock;
++import android.text.TextUtils;
++import android.widget.Toast;
++
++import com.android.settings.R;
++
++public class VkCompileReceiver extends BroadcastReceiver {
++
++    private static final String CHANNEL_ID = "xdplus_vkcompile";
++    private static final int NOTIFICATION_ID = 0x786b;  // "xk"
++    private static final long NOTIFICATION_TIMEOUT_MS = 30_000;
++    private static final long TOAST_MIN_INTERVAL_MS = 20_000;
++
++    private static long sLastToastAt;
++
++    @Override
++    public void onReceive(Context context, Intent intent) {
++        final String pkg = intent.getStringExtra("pkg");
++        final String count = intent.getStringExtra("count");
++        final String mode = intent.getStringExtra("mode");
++        if (TextUtils.isEmpty(pkg)) return;
++
++        final String text = context.getString(
++                R.string.xdplus_vkcompile_text, pkg, TextUtils.isEmpty(count) ? "0" : count);
++
++        if ("toast".equals(mode)) {
++            final long now = SystemClock.elapsedRealtime();
++            if (now - sLastToastAt < TOAST_MIN_INTERVAL_MS) return;
++            sLastToastAt = now;
++            Toast.makeText(context, text, Toast.LENGTH_LONG).show();
++            return;
++        }
++
++        final NotificationManager nm = context.getSystemService(NotificationManager.class);
++        nm.createNotificationChannel(new NotificationChannel(CHANNEL_ID,
++                context.getString(R.string.xdplus_vkcompile_channel),
++                NotificationManager.IMPORTANCE_LOW));
++        nm.notify(NOTIFICATION_ID, new Notification.Builder(context, CHANNEL_ID)
++                .setSmallIcon(com.android.internal.R.drawable.stat_sys_download)
++                .setContentTitle(context.getString(R.string.xdplus_vkcompile_title))
++                .setContentText(text)
++                .setProgress(0, 0, true)
++                .setOngoing(true)
++                .setOnlyAlertOnce(true)
++                .setTimeoutAfter(NOTIFICATION_TIMEOUT_MS)
++                .build());
++    }
++}
+diff --git a/src/com/android/settings/gpd/XdPlusFragmentBase.java b/src/com/android/settings/gpd/XdPlusFragmentBase.java
+new file mode 100644
+index 0000000..5e370ed
+--- /dev/null
++++ b/src/com/android/settings/gpd/XdPlusFragmentBase.java
+@@ -0,0 +1,66 @@
++/*
++ * Shared plumbing for the GPD XD+ tweak pages.
++ *
++ * None of these pages does privileged work itself: a toggle sets a
++ * sys.xdplus.* / persist.sys.xdplus.* property (SELinux is permissive on this
++ * port) and init.xdplus.rc dispatches the root-side action. Anything backed by
++ * Settings.Global is applied directly.
++ */
++
++package com.android.settings.gpd;
++
++import android.app.settings.SettingsEnums;
++import android.os.SystemProperties;
++import android.text.TextUtils;
++import android.widget.Toast;
++
++import androidx.preference.ListPreference;
++import androidx.preference.SwitchPreference;
++
++import com.android.settings.SettingsPreferenceFragment;
++
++public abstract class XdPlusFragmentBase extends SettingsPreferenceFragment {
++
++    // Momentary action dispatch prop — init resets it to "none" after handling.
++    protected static final String PROP_ACTION = "sys.xdplus.action";
++
++    /** Boolean property toggle: checked == property is set and not "0". */
++    protected SwitchPreference bindSwitch(String key, String prop) {
++        final SwitchPreference pref = (SwitchPreference) findPreference(key);
++        pref.setChecked(getBoolProp(prop));
++        pref.setOnPreferenceChangeListener((p, v) -> {
++            SystemProperties.set(prop, ((Boolean) v) ? "1" : "0");
++            return true;
++        });
++        return pref;
++    }
++
++    /** Value list whose summary tracks the selected entry. */
++    protected ListPreference bindList(String key, String prop, String def) {
++        final ListPreference pref = (ListPreference) findPreference(key);
++        pref.setValue(SystemProperties.get(prop, def));
++        pref.setSummary(pref.getEntry());
++        pref.setOnPreferenceChangeListener((p, v) -> {
++            SystemProperties.set(prop, (String) v);
++            pref.setValue((String) v);
++            pref.setSummary(pref.getEntry());
++            return true;
++        });
++        return pref;
++    }
++
++    protected void dispatch(String action, int toastRes) {
++        SystemProperties.set(PROP_ACTION, action);
++        Toast.makeText(getContext(), toastRes, Toast.LENGTH_LONG).show();
++    }
++
++    protected static boolean getBoolProp(String prop) {
++        final String v = SystemProperties.get(prop, "0");
++        return !TextUtils.isEmpty(v) && !"0".equals(v);
++    }
++
++    @Override
++    public int getMetricsCategory() {
++        return SettingsEnums.PAGE_UNKNOWN;
++    }
++}
