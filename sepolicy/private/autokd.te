@@ -1,0 +1,34 @@
+# MTK eMMC/SDIO auto-calibration daemon, /vendor/bin/autokd, started oneshot
+# from init_connectivity.rc as user/group system. It is an OEM blob, but the
+# blob set ships no domain for it: the OEM's own nonplat policy declares
+# autokd_data_file and nothing else, so the binary is plain vendor_file with no
+# exec type and the daemon runs as u:r:init:s0. It was the single largest
+# remaining source of init-domain denials on this device (314 of 314 in the
+# enforcing runs), all of them the same uevent socket read.
+#
+# The exec type is declared here rather than in a vendor policy because this
+# device is not full-Treble (ro.treble.enabled=false) and its vendor sepolicy is
+# the frozen OEM CIL, which we do not rebuild. The label itself is applied by
+# the vendor tree's vendor_file_contexts.
+type autokd, domain;
+type autokd_exec, exec_type, vendor_file_type, file_type;
+
+init_daemon_domain(autokd)
+
+# MEASURED: the only denial this daemon produced across three enforcing runs
+# (53, 336 and 382 lines) was read on its own uevent socket.
+allow autokd self:netlink_kobject_uevent_socket { create bind read setopt };
+
+# The calibration interface: /sys/autok/{ready,stage1,stage2,param_count,debug,
+# ss_corner,suggest_vol} and /sys/kernel/debug/autok_log. Nothing on this device
+# labels those nodes -- there is no device genfs_contexts -- so they are plain
+# sysfs, and the daemon both reads and writes them.
+r_dir_file(autokd, sysfs)
+allow autokd sysfs:file write;
+
+# Deliberately NOT granted here: /data/nvram access (nvram_data_file) and the
+# service.nvram_init property. Both types are declared only in the OEM's frozen
+# vendor CIL, which is loaded at runtime and invisible to this policy at build
+# time, so naming them here does not compile. The daemon is oneshot at boot and
+# produced no denial for either across three enforcing runs; if a harvest turns
+# one up, the rule belongs in a vendor-side policy, not this file.

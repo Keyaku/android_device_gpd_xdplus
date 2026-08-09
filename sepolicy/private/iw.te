@@ -1,0 +1,14 @@
+# `iw dev wlan0 set power_save off`, run once from init.xdplus.rc.
+#
+# The platform's iw.te declares the domain and nothing else, because AOSP never
+# runs iw itself. On this device it does run, and under enforcing every one of
+# its netlink calls is denied -- MEASURED as 8 `create` denials on
+# netlink_socket across three Wi-Fi cycles, plus `net_raw`, the socket read/
+# write/bind/setopt/getattr set and a udp_socket create on a permissive boot.
+#
+# nl80211 is a NETLINK_GENERIC protocol, but this 3.18 kernel predates the
+# finer-grained netlink socket classes, so it lands in the catch-all
+# netlink_socket class rather than netlink_generic_socket.
+allow iw self:netlink_socket { create bind read write getattr setopt };
+allow iw self:udp_socket { create ioctl };
+allow iw self:capability net_raw;

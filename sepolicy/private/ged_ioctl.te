@@ -1,0 +1,33 @@
+# MTK GED (Graphics Extension Device) ioctls on /proc/ged.
+#
+# MEASURED: 61 of the 68 denials left on a permissive boot after the service
+# labelling were `denied { ioctl } ... path="/proc/ged" ioctlcmd=6701`, from
+# hal_graphics_composer_default (40), bootanim (9), platform_app (7),
+# surfaceflinger (2), hal_graphics_allocator_default (2) and system_server (1).
+#
+# These are NOT missing `allow` rules. The OEM's vendor CIL already grants every
+# one of those domains `allow <domain> proc_ged:file { ioctl read write open }`.
+# They are ioctl *extended permission* denials -- the giveaway is the `ioctlcmd=`
+# field, which a plain ioctl denial does not carry. Platform policy contains
+#
+#     allowxperm domain fs_type:file ioctl { 0x5401 0x5450 0x5451 ... }
+#
+# and once any xperm rule exists for a (source, target, class, ioctl) tuple the
+# kernel enforces the whitelist for every domain. proc_ged is an fs_type (the
+# OEM CIL puts it in that attribute), so GED's whole command set falls outside
+# the list and the graphics stack loses the GPU bridge under enforcement --
+# which is what broke `screencap` in the first enforcing run.
+#
+# GED_MAGIC is 'g' (0x67) and the command ids are 0..12 and 100..105
+# (kernel drivers/misc/mediatek/gpu/ged/include/ged_bridge_id.h). The audit
+# record prints the low 16 bits, hence 0x6701 for LOG_BUF_WRITE. The whole 'g'
+# page is whitelisted rather than the two disjoint runs: the driver's command
+# set has grown before, and a missing id fails as a silent GPU stall.
+#
+# The source is `domain` and the target `fs_type` because neither proc_ged nor
+# the two vendor graphics domains can be named from here -- they are declared in
+# the frozen OEM vendor CIL, which is loaded at runtime and invisible at build
+# time. That is wider than it looks: an xperm rule grants nothing on its own,
+# it only lifts a filter. Who may touch /proc/ged at all is still decided by the
+# base `allow` rules in the vendor policy, which are unchanged.
+allowxperm domain fs_type:file ioctl { 0x6700-0x67ff };
