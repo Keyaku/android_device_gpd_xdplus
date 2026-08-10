@@ -46,6 +46,25 @@ xlog() { /system/bin/log -t xdplus_tweaks "$*" 2>/dev/null; echo "xdplus_tweaks:
 #    external display makes WindowManager report the display as having content,
 #    DisplayManager then gives it its own layer stack instead of mirroring
 #    stack 0, and the blob refuses (I-size mismatch at chkMir L3819).
+# Poll a condition instead of sleeping through it. $1 is the old sleep's length
+# and becomes the timeout, so the worst case is unchanged and the typical case is
+# as fast as the hardware allows; returns 0 the moment the condition holds, 1 on
+# timeout. Callers that used to sleep unconditionally must still work when this
+# returns 1 -- a timeout has to mean "carry on and let the existing check decide",
+# never "fail", or an unreliable probe would turn a working bringup into a failed
+# one. Measured before this existed: bringup spent 5.06 s between the plug uevent
+# and powering the transmitter, and another 5.09 s reaching DECOUPLE_MIRROR, all
+# of it waiting on timers rather than on the hardware.
+wait_for() {
+	_wf_left=$(( $1 * 5 ))
+	while [ "$_wf_left" -gt 0 ]; do
+		eval "$2" && return 0
+		sleep 0.2
+		_wf_left=$(( _wf_left - 1 ))
+	done
+	return 1
+}
+
 hdmi_up() {
 	RES="$(getprop persist.sys.xdplus.hdmi_res)"; [ -z "$RES" ] && RES=2
 	if [ ! -x "$CTL" ]; then
@@ -82,8 +101,10 @@ hdmi_up() {
 	dumpsys SurfaceFlinger > /dev/null
 
 	# Keyguard gate (see header). 224 = KEYCODE_WAKEUP.
-	input keyevent 224; sleep 1
-	wm dismiss-keyguard; sleep 2
+	input keyevent 224
+	wait_for 1 'dumpsys power 2>/dev/null | grep -q "mWakefulness=Awake"'
+	wm dismiss-keyguard
+	wait_for 2 '! dumpsys window 2>/dev/null | grep -q "isKeyguardShowing=true"'
 
 	# NOTE: the debugfs nodes can come up 0444, which makes every write below fail
 	# with "Permission denied" even as root.
@@ -92,16 +113,31 @@ hdmi_up() {
 	xlog "kernel bringup (res=$RES)"
 	# No 'disable' step: the kernel no longer presets is_enabled, so a
 	# single enable runs hdmi_drv_init() and creates hdmi_rdma_config_kthread.
+	# TODO(B): these two sleeps are hardware settling -- the transmitter and its
+	# PLLs -- not waits on an observable, so they are deliberately NOT converted.
+	# /d/hdmi_pwrpin's powerenable/clockenable look pollable and are a trap: they
+	# flip when the call returns, so they prove the call happened, not that the
+	# hardware settled. Converting them needs a real readiness signal, or an
+	# honest floor with the reason written down. A blanket sleep->poll here works
+	# on the bench and fails intermittently.
 	$CTL enable;  sleep 2
 	$CTL power 1; sleep 3
-	$CTL res "$RES"; sleep 6
+	$CTL res "$RES"
+	wait_for 6 'dumpsys SurfaceFlinger 2>/dev/null | grep -q "DisplayDevice{1"'
 
 	for try in 1 2 3; do
 		if [ "$(dumpsys display | grep -c 'HDMI Screen')" = 0 ]; then
-			# The res 11 -> res N toggle is what actually registers display 1.
+			# TODO(C): this res 11 -> res N toggle, and the retry loop around it,
+			# are a workaround for a bringup that is not reliable -- nobody has
+			# found why a single mode set does not register display 1. Fixing
+			# that removes most of the remaining cadence, and it is newly worth
+			# revisiting: the kernel now raises the switch and emits uevents at
+			# the right moments, which it did not when this loop was written, so
+			# some of this poking may already be redundant.
 			echo fakecablein:disable > $H
 			$CTL res 11; sleep 3
-			$CTL res "$RES"; sleep 5
+			$CTL res "$RES"
+			wait_for 5 'dumpsys SurfaceFlinger 2>/dev/null | grep -q "DisplayDevice{1"'
 		fi
 
 		if [ "$(dumpsys SurfaceFlinger | grep -c 'DisplayDevice{1')" = 0 ]; then
@@ -113,10 +149,14 @@ hdmi_up() {
 		# presentation) claimed it and the blob will refuse the mirror.
 		if ! dumpsys SurfaceFlinger | grep -A3 'DisplayDevice{1' | grep -q 'layerStack=0'; then
 			xlog "attempt $try: external display not mirroring stack 0 (keyguard?) — dismissing and retrying"
-			wm dismiss-keyguard; sleep 2
+			wm dismiss-keyguard
+			wait_for 2 '! dumpsys window 2>/dev/null | grep -q "isKeyguardShowing=true"'
 			continue
 		fi
-		sleep 2
+		# Wait for the mode the check below wants rather than a fixed 2 s. A
+		# timeout falls through deliberately: the existing read then reports
+		# whatever the mode actually is, including the empty case it accepts.
+		wait_for 2 'grep -q "session_mode:4" /d/mtkfb 2>/dev/null'
 		# Session mode comes from the driver's own state, not from dmesg.
 		# The old check parsed the kernel ring buffer, so anything that
 		# cleared or flooded it made a HEALTHY mirror read as failed and
