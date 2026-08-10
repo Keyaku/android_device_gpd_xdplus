@@ -75,7 +75,15 @@ bgw.current3gband=0
 ro.sf.hwrotation=180
 ril.radiooff.poweroffMD=0
 
-persist.sys.flat_rotation=1
+# Rotation proposed while the device rests flat (patch 0007): the accelerometer
+# is in the base, so the normal on-table pose reads flat and stock Android would
+# keep whatever rotation it last had.
+#
+# This is a rotation INDEX, so it moves with the natural orientation. It was <1>
+# while the panel was portrait-natural, where 1 meant landscape. The primary
+# display is rotated in SurfaceFlinger now and landscape IS natural, so the same
+# pose is rotation 0 and a stale <1> forces reverse portrait on every flat rest.
+persist.sys.flat_rotation=0
 
 # OTA manifest URI for the LineageOS Updater.
 #
