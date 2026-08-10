@@ -100,11 +100,19 @@ hdmi_up() {
 	fi
 	dumpsys SurfaceFlinger > /dev/null
 
-	# Keyguard gate (see header). 224 = KEYCODE_WAKEUP.
-	input keyevent 224
-	wait_for 1 'dumpsys power 2>/dev/null | grep -q "mWakefulness=Awake"'
-	wm dismiss-keyguard
-	wait_for 2 '! dumpsys window 2>/dev/null | grep -q "isKeyguardShowing=true"'
+	# Keyguard gate (see header). 224 = KEYCODE_WAKEUP. input and wm are
+	# app_process launches costing about a second each, and on the path that
+	# matters -- a cable already in at boot -- the device is awake and the
+	# keyguard is not up, so both were pure cost. Read the state first (a
+	# dumpsys is far cheaper) and only pay when there is something to change.
+	if ! dumpsys power 2>/dev/null | grep -q "mWakefulness=Awake"; then
+		input keyevent 224
+		wait_for 1 'dumpsys power 2>/dev/null | grep -q "mWakefulness=Awake"'
+	fi
+	if dumpsys window 2>/dev/null | grep -q "isKeyguardShowing=true"; then
+		wm dismiss-keyguard
+		wait_for 2 '! dumpsys window 2>/dev/null | grep -q "isKeyguardShowing=true"'
+	fi
 
 	# NOTE: the debugfs nodes can come up 0444, which makes every write below fail
 	# with "Permission denied" even as root.
@@ -113,29 +121,36 @@ hdmi_up() {
 	xlog "kernel bringup (res=$RES)"
 	# No 'disable' step: the kernel no longer presets is_enabled, so a
 	# single enable runs hdmi_drv_init() and creates hdmi_rdma_config_kthread.
-	# TODO(B): these two sleeps are hardware settling -- the transmitter and its
-	# PLLs -- not waits on an observable, so they are deliberately NOT converted.
-	# /d/hdmi_pwrpin's powerenable/clockenable look pollable and are a trap: they
-	# flip when the call returns, so they prove the call happened, not that the
-	# hardware settled. Converting them needs a real readiness signal, or an
-	# honest floor with the reason written down. A blanket sleep->poll here works
-	# on the bench and fails intermittently.
-	$CTL enable;  sleep 2
-	$CTL power 1; sleep 3
+	# Both of these used to be blind sleeps for hardware settling, because
+	# /d/hdmi_pwrpin's powerenable/clockenable are a trap: they flip when the
+	# call returns, so they prove the call happened, not that the hardware
+	# settled. Each now waits on something the driver only produces once the
+	# step really finished, with the old sleep kept as the timeout:
+	#  - enable runs hdmi_drv_init(), whose last act is to create the
+	#    hdmi_rdma_config_kthread kernel thread (comm truncated to 15 chars).
+	#  - power 1 powers the transmitter; the driver then detects the sink and
+	#    reads its EDID on the powered path, and publishes ready=1 only after
+	#    that, which is the point a mode set will stick. A kernel too old to
+	#    publish ready= simply times out into the old 3 s wait.
+	$CTL enable;  wait_for 2 'pgrep hdmi_rdma_confi >/dev/null 2>&1'
+	$CTL power 1; wait_for 3 'grep -q "ready=1" /d/hdmi_pwrpin 2>/dev/null'
 	$CTL res "$RES"
 	wait_for 6 'dumpsys SurfaceFlinger 2>/dev/null | grep -q "DisplayDevice{1"'
 
 	for try in 1 2 3; do
 		if [ "$(dumpsys display | grep -c 'HDMI Screen')" = 0 ]; then
-			# TODO(C): this res 11 -> res N toggle, and the retry loop around it,
-			# are a workaround for a bringup that is not reliable -- nobody has
-			# found why a single mode set does not register display 1. Fixing
-			# that removes most of the remaining cadence, and it is newly worth
-			# revisiting: the kernel now raises the switch and emits uevents at
-			# the right moments, which it did not when this loop was written, so
-			# some of this poking may already be redundant.
+			# This res 11 -> res N toggle, and the retry loop around it, are a
+			# workaround for a bringup that is not reliable -- nobody has found
+			# why a single mode set sometimes does not register display 1. It
+			# costs nothing on a healthy bringup because the check above skips
+			# it, so it stays until there is evidence it is dead: the log line
+			# below is that evidence being collected. The intermediate mode set
+			# is waited for rather than slept through -- res_hdmi carries the
+			# applied mode + 1, so 11 lands as 12.
+			xlog "attempt $try: display 1 absent after the mode set — toggling via res 11"
 			echo fakecablein:disable > $H
-			$CTL res 11; sleep 3
+			$CTL res 11
+			wait_for 3 '[ "$(cat /sys/class/switch/res_hdmi/state 2>/dev/null)" = 12 ]'
 			$CTL res "$RES"
 			wait_for 5 'dumpsys SurfaceFlinger 2>/dev/null | grep -q "DisplayDevice{1"'
 		fi
