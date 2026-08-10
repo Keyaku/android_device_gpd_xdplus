@@ -13,10 +13,11 @@ type xdplus_tweaks_exec, exec_type, system_file_type, file_type;
 
 init_daemon_domain(xdplus_tweaks)
 
-# xdplus_hdmid runs the same bring-up on a cable event. It execs the dispatcher
-# directly rather than through the shell, so the transition happens here instead
-# of leaving the bring-up in the daemon's own domain.
+# xdplus_hdmid runs the same bring-up on a cable event.
 domain_auto_trans(xdplus_hdmid, xdplus_tweaks_exec, xdplus_tweaks)
+
+# Inherited linker64 fd; without it the linker fails right after the transition.
+allow xdplus_tweaks xdplus_hdmid:fd use;
 
 # It is a shell script, so it needs the interpreter and every toolbox applet it
 # calls (getprop, setprop, rm, chmod, log, hdmictl, dumpsys, am). They stay in
@@ -28,6 +29,10 @@ allow xdplus_tweaks toolbox_exec:file rx_file_perms;
 # dac_override is neverallow-ed for new domains (domain.te); the script runs as
 # root and owns everything it touches, so it does not need it.
 allow xdplus_tweaks self:capability { fowner fsetid chown };
+
+# hdmi_up() confirms DECOUPLE_MIRROR by parsing dmesg; no dmesg = never passes.
+allow xdplus_tweaks kernel:system syslog_read;
+allow xdplus_tweaks kmsg_device:chr_file r_file_perms;
 
 # The HDMI half: /d/hdmi and /d/dispsys are the register and state interfaces
 # (plain debugfs and debugfs_fb on this kernel), /dev/hdmitx is what hdmictl
