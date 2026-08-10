@@ -117,11 +117,24 @@ hdmi_up() {
 			continue
 		fi
 		sleep 2
-		if dmesg | grep 'mode now' | tail -1 | grep -q DECOUPLE_MIRROR; then
+		# Session mode comes from the driver's own state, not from dmesg.
+		# The old check parsed the kernel ring buffer, so anything that
+		# cleared or flooded it made a HEALTHY mirror read as failed and
+		# the teardown below then destroyed it. 4 = DECOUPLE_MIRROR.
+		SMODE="$(sed -n 's/.*session_mode:\([0-9]*\).*/\1/p' /d/mtkfb 2>/dev/null | head -1)"
+		if [ "$SMODE" = 4 ]; then
 			xlog "HDMI mirror up (DECOUPLE_MIRROR, res=$RES)"
 			return 0
 		fi
-		xlog "attempt $try: display 1 up but session mode is not DECOUPLE_MIRROR — retrying"
+		if [ -z "$SMODE" ]; then
+			# Kernel too old to publish session_mode, or the node did not
+			# read. Display 1 is registered and mirroring stack 0, so
+			# accept it: tearing down on an inconclusive read is the very
+			# failure this replaced.
+			xlog "HDMI up, session mode unreadable — accepting (res=$RES)"
+			return 0
+		fi
+		xlog "attempt $try: display 1 up but session mode is $SMODE, not DECOUPLE_MIRROR — retrying"
 	done
 
 	# All attempts missed. Tear down cleanly so the primary panel is not left wedged
