@@ -156,6 +156,8 @@ TARGET_HAS_NO_WIFI_STATS := true
 
 # Recovery
 TARGET_RECOVERY_FSTAB := device/gpd/xdplus/rootdir/root/fstab.mt8173
+# Defaults to $(TARGET_DEVICE_DIR)/../common, which does not exist here.
+TARGET_RELEASETOOLS_EXTENSIONS := device/gpd/xdplus
 TARGET_USERIMAGES_USE_EXT4 := true
 
 # SELinux. This port's own policy lives in the SYSTEM_EXT slot, not in
