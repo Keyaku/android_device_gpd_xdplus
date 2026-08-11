@@ -242,6 +242,11 @@ PRODUCT_DEFAULT_PROPERTY_OVERRIDES += \
 # real LK/preloader version if it is ever extracted from the lk/preloader part.
 PRODUCT_DEFAULT_PROPERTY_OVERRIDES += \
     ro.bootloader=GPD-XDPLUS-1.0
+
+# The frozen vendor sensors HAL enumerates LIGHT (5) and PROXIMITY (8) from a
+# static list. Neither part answers on i2c, so SensorService drops both.
+PRODUCT_DEFAULT_PROPERTY_OVERRIDES += \
+    ro.sensors.ignore_types=5,8
 	
 PRODUCT_PACKAGES += \
     librs_jni \

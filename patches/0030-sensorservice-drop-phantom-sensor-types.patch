@@ -1,0 +1,60 @@
+From 99c0e302b98242424772c0aa2ddf75ccd58d78ba Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Tue, 11 Aug 2026 17:26:19 +0100
+Subject: [PATCH] sensorservice: allow a device to drop phantom sensor types
+
+A HAL that enumerates its sensor list statically can advertise sensors
+with no hardware behind them, and nothing downstream can tell the
+difference: the sensors appear in the framework list, apps can register
+listeners on them, and no sample ever arrives.
+
+`ro.sensors.ignore_types` takes a comma-separated list of sensor type
+values, which are skipped when the hardware list is walked. Empty by
+default, so behaviour is unchanged unless a device sets it.
+
+Changes:
+- Parse `ro.sensors.ignore_types` in `SensorService::onFirstRef()` and skip matching sensors before registration.
+
+Change-Id: Iba10abd8a78e54ddd212d4aca964cb99dd7101a7
+---
+ services/sensorservice/SensorService.cpp | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/services/sensorservice/SensorService.cpp b/services/sensorservice/SensorService.cpp
+index 3ca34bba1b..1cdc08b257 100644
+--- a/services/sensorservice/SensorService.cpp
++++ b/services/sensorservice/SensorService.cpp
+@@ -157,6 +157,20 @@ void SensorService::onFirstRef() {
+         if (count > 0) {
+             ssize_t orientationIndex = -1;
+             bool hasGyro = false, hasAccel = false, hasMag = false;
++
++            // Sensor types the HAL enumerates from a static list with no
++            // hardware behind them. Comma-separated sensor type values.
++            std::unordered_set<int> ignoredTypes;
++            {
++                char value[PROPERTY_VALUE_MAX];
++                property_get("ro.sensors.ignore_types", value, "");
++                char* saveptr = nullptr;
++                for (char* tok = strtok_r(value, ",", &saveptr); tok != nullptr;
++                        tok = strtok_r(nullptr, ",", &saveptr)) {
++                    ignoredTypes.insert(atoi(tok));
++                }
++            }
++
+             uint32_t virtualSensorsNeeds =
+                     (1<<SENSOR_TYPE_GRAVITY) |
+                     (1<<SENSOR_TYPE_LINEAR_ACCELERATION) |
+@@ -167,6 +181,12 @@ void SensorService::onFirstRef() {
+             for (ssize_t i=0 ; i<count ; i++) {
+                 bool useThisSensor=true;
+ 
++                if (ignoredTypes.count(list[i].type) > 0) {
++                    ALOGI("Ignoring sensor \"%s\" (type %d), declared unavailable",
++                            list[i].name, list[i].type);
++                    continue;
++                }
++
+                 switch (list[i].type) {
+                     case SENSOR_TYPE_ACCELEROMETER:
+                         hasAccel = true;
