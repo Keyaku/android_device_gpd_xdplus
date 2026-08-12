@@ -1,0 +1,50 @@
+From f941edcef53a916e8aa5b3d2923af94a536cab1b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Wed, 12 Aug 2026 19:32:57 +0100
+Subject: [PATCH] DocumentsUI: give providers longer than 20s before declaring
+ them wedged
+
+Deleting a large folder from the microSD reported progress and then left
+the folder in place. DocumentsUI hands ExternalStorageProvider a whole
+subtree in a single deleteDocument call, and arms a 20 second watchdog on
+every provider client. A 24k-entry tree on removable storage takes longer
+than that honestly, so the watchdog reported it, AMS killed the provider
+part way through the walk ("ContentProvider not responding"), and nothing
+propagated back to the caller: files vanished, the folder survived, the
+notification just stopped.
+
+Raise the timeout to 10 minutes, long enough that only a genuinely stuck
+provider trips it.
+
+Deleting the tree client side instead (one call per document) was tried
+first and reverted: it fixes the kill but runs at ~13 files/sec against
+~870, because the per-document provider overhead stops being amortized
+across the tree.
+
+Changes:
+- `DocumentsApplication`: `PROVIDER_ANR_TIMEOUT` 20s -> 10min, with the reasoning inline
+
+Change-Id: I796011fa0f180fb86acd600e74d5f0b4bf2ac3ee
+---
+ src/com/android/documentsui/DocumentsApplication.java | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/com/android/documentsui/DocumentsApplication.java b/src/com/android/documentsui/DocumentsApplication.java
+index c7e21a4..e8c4449 100644
+--- a/src/com/android/documentsui/DocumentsApplication.java
++++ b/src/com/android/documentsui/DocumentsApplication.java
+@@ -47,7 +47,13 @@ import java.util.List;
+ 
+ public class DocumentsApplication extends Application {
+     private static final String TAG = "DocumentsApplication";
+-    private static final long PROVIDER_ANR_TIMEOUT = 20 * DateUtils.SECOND_IN_MILLIS;
++    // A provider is handed whole subtrees to delete or query in a single call, and on removable
++    // storage that legitimately runs for minutes: the microSD holds trees of tens of thousands of
++    // files, and 20 seconds of honest work looked exactly like a wedged provider. The watchdog
++    // then reported it, the framework killed ExternalStorageProvider part way through the walk,
++    // and the Files app showed a delete that progressed and then silently left the folder behind.
++    // Long enough that only a genuinely stuck provider trips it.
++    private static final long PROVIDER_ANR_TIMEOUT = 10 * DateUtils.MINUTE_IN_MILLIS;
+ 
+     private static final List<String> PACKAGE_FILTER_ACTIONS = Lists.newArrayList(
+             Intent.ACTION_PACKAGE_ADDED,
