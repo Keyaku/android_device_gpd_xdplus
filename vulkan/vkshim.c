@@ -19,6 +19,11 @@
 //     VkCompileReceiver (notification/toast per persist.sys.xdplus.vknotify).
 //     Property sets from an untrusted app domain only work because this port
 //     runs SELinux permissive.
+//  3. Driver identity: the 1.0.49 blob predates VK_KHR_driver_properties and
+//     the external_*_capabilities trio, so DevCheck-class apps saw "unknown"
+//     driver, 0.0.0.0 conformance and all-zero UUIDs. The shim advertises
+//     those extensions and answers them from 1.0 entry points — real DDK
+//     build tag, blob build-id as driverUUID. See the identity section below.
 //
 // The shim cache is owned per VkDevice and torn down from the vkCreateDevice /
 // vkDestroyDevice hooks, and every pipeline-creation batch holds cache_mu for
@@ -135,6 +140,13 @@ static PFN_vkDestroyCommandPool real_dcpool;
 static PFN_vkAllocateCommandBuffers real_acb;
 static PFN_vkGetPhysicalDeviceMemoryProperties real_gpdmp;
 static PFN_vkCreateInstance real_cinst;
+static PFN_vkEnumerateDeviceExtensionProperties real_edep;
+static PFN_vkGetPhysicalDeviceProperties real_gpdp;
+static PFN_vkGetPhysicalDeviceFeatures real_gpdf;
+static PFN_vkGetPhysicalDeviceFormatProperties real_gpdfp;
+static PFN_vkGetPhysicalDeviceImageFormatProperties real_gpdifp;
+static PFN_vkGetPhysicalDeviceQueueFamilyProperties real_gpdqfp;
+static PFN_vkGetPhysicalDeviceSparseImageFormatProperties real_gpdsifp;
 static VkInstance shim_instance;
 static VkPhysicalDeviceMemoryProperties mem_props;
 static int mem_props_loaded;
@@ -1649,6 +1661,255 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateInstance(
 	return r;
 }
 
+// ---- driver identity: VK_KHR_driver_properties + friends ------------------
+//
+// The blob is Vulkan 1.0.49 from 2017: it predates VK_KHR_driver_properties
+// and the VK_KHR_external_*_capabilities trio, so it never advertises them
+// and never fills their property structs. DevCheck-class apps therefore show
+// the driver as "unknown", conformance 0.0.0.0 and both UUIDs as all zeros —
+// the underlying values exist (the DDK 1.9@4893595 build tag, the BVNC the
+// blob itself reports as pipelineCacheUUID, the blob's own GNU build-id) but
+// nothing surfaces them.
+//
+// The shim advertises three information-only extensions and answers their
+// queries itself, built purely from 1.0 entry points the blob does have:
+//
+//  - VK_KHR_driver_properties: driverName "PowerVR Rogue", driverInfo the
+//    real DDK build tag, driverID VK_DRIVER_ID_IMAGINATION_PROPRIETARY_KHR.
+//    conformanceVersion stays 0.0.0.0 — the spec-mandated "unknown": no
+//    Series6XT/GX6250 Vulkan submission exists on the Khronos conformant
+//    products list (checked 2026-08-13; every PowerVR Vulkan entry there is
+//    Series8XE or newer), so there is no real value to report.
+//  - VK_KHR_external_fence_capabilities: carried solely to make
+//    VkPhysicalDeviceIDProperties queryable. deviceUUID is a stable
+//    name-based value derived from the vendorID/deviceID and the BVNC; the
+//    driverUUID is the vendor blob's own .note.gnu.build-id, per ABI — the
+//    one identity that genuinely changes when the driver binary changes.
+//    deviceLUID stays invalid (no device groups on this hardware). The
+//    extension's one entry point, vkGetPhysicalDeviceExternalFenceProperties-
+//    KHR, reports no external handle support, which is the truth: the blob
+//    has none.
+//  - VK_KHR_get_physical_device_properties2: the query transport the two
+//    structs above ride on. Advertising it lets apps call any of the *2KHR
+//    family, so the whole family is implemented over the 1.0 equivalents.
+//
+// Nothing here changes rendering behaviour; the additions are read-only
+// identity. debug.xdplus.vkdrvinfo=0 disables the whole block.
+static int drvinfo = -1;
+
+// {vendorID 0x1010 LE, deviceID 0x6250 LE, BVNC "4 40 2 51" as the blob
+// spells it in pipelineCacheUUID, "XD+"}. Bytes 6/8 get RFC 4122 version/
+// variant bits at fill time — cosmetic only, so UUID-parsing tools see a
+// well-formed name-based UUID.
+static const uint8_t shim_device_uuid[VK_UUID_SIZE] = {
+	0x10, 0x10, 0x50, 0x62, '4', ' ', '4', '0',
+	' ', '2', ' ', '5', '1', 'X', 'D', '+'
+};
+// .note.gnu.build-id of /vendor/lib{,64}/hw/vulkan.mt8173.so (16 B each).
+// Bump these if the vendor blob is ever swapped.
+#ifdef __LP64__
+static const uint8_t shim_driver_uuid[VK_UUID_SIZE] = {
+	0x2b, 0x83, 0x3e, 0x4d, 0x8d, 0x51, 0xf6, 0x16,
+	0x51, 0xc1, 0x9d, 0x08, 0xef, 0x96, 0x03, 0x7c
+};
+#else
+static const uint8_t shim_driver_uuid[VK_UUID_SIZE] = {
+	0xa2, 0x57, 0x48, 0x6e, 0x2b, 0xac, 0x14, 0x93,
+	0x31, 0xdb, 0x48, 0x47, 0xa7, 0xce, 0xe0, 0xe6
+};
+#endif
+
+static const VkExtensionProperties shim_extra_exts[] = {
+	{ VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME,
+		VK_KHR_DRIVER_PROPERTIES_SPEC_VERSION },
+	{ VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME,
+		VK_KHR_EXTERNAL_FENCE_CAPABILITIES_SPEC_VERSION },
+	{ VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+		VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_SPEC_VERSION },
+};
+#define SHIM_EXTRA_EXTS ((uint32_t)(sizeof shim_extra_exts / sizeof shim_extra_exts[0]))
+
+static int identity_resolved;
+
+static void resolve_identity_fns(void) {
+	if (identity_resolved) return;
+	identity_resolved = 1;
+	if (!real_gpdp) real_gpdp = (PFN_vkGetPhysicalDeviceProperties)
+		real_gipa(shim_instance, "vkGetPhysicalDeviceProperties");
+	real_gpdf = (PFN_vkGetPhysicalDeviceFeatures)
+		real_gipa(shim_instance, "vkGetPhysicalDeviceFeatures");
+	real_gpdfp = (PFN_vkGetPhysicalDeviceFormatProperties)
+		real_gipa(shim_instance, "vkGetPhysicalDeviceFormatProperties");
+	real_gpdifp = (PFN_vkGetPhysicalDeviceImageFormatProperties)
+		real_gipa(shim_instance, "vkGetPhysicalDeviceImageFormatProperties");
+	real_gpdqfp = (PFN_vkGetPhysicalDeviceQueueFamilyProperties)
+		real_gipa(shim_instance, "vkGetPhysicalDeviceQueueFamilyProperties");
+	real_gpdsifp = (PFN_vkGetPhysicalDeviceSparseImageFormatProperties)
+		real_gipa(shim_instance, "vkGetPhysicalDeviceSparseImageFormatProperties");
+	if (!real_gpdmp) real_gpdmp = (PFN_vkGetPhysicalDeviceMemoryProperties)
+		real_gipa(shim_instance, "vkGetPhysicalDeviceMemoryProperties");
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_EnumerateDeviceExtensionProperties(
+	VkPhysicalDevice pd, const char *layer, uint32_t *count,
+	VkExtensionProperties *props) {
+	if (layer || !prop_on("debug.xdplus.vkdrvinfo", &drvinfo))
+		return real_edep(pd, layer, count, props);
+	if (!props) {
+		VkResult r = real_edep(pd, NULL, count, NULL);
+		if (r != VK_SUCCESS) return r;
+		*count += SHIM_EXTRA_EXTS;
+		return VK_SUCCESS;
+	}
+	// Two-phase with capacity: save it before the real driver overwrites
+	// *count with the number it wrote, then append ours into what is left.
+	uint32_t cap = *count;
+	VkResult r = real_edep(pd, NULL, count, props);
+	if (r != VK_SUCCESS && r != VK_INCOMPLETE) return r;
+	uint32_t filled = *count;
+	uint32_t appended = 0;
+	while (filled + appended < cap && appended < SHIM_EXTRA_EXTS) {
+		props[filled + appended] = shim_extra_exts[appended];
+		appended++;
+	}
+	*count = filled + appended;
+	return (r == VK_SUCCESS && appended == SHIM_EXTRA_EXTS)
+		? VK_SUCCESS : VK_INCOMPLETE;
+}
+
+static void fill_driver_properties(VkPhysicalDeviceDriverPropertiesKHR *p) {
+	p->driverID = VK_DRIVER_ID_IMAGINATION_PROPRIETARY_KHR;
+	strncpy(p->driverName, "PowerVR Rogue", VK_MAX_DRIVER_NAME_SIZE_KHR);
+	strncpy(p->driverInfo, "DDK 1.9@4893595", VK_MAX_DRIVER_INFO_SIZE_KHR);
+	// 0.0.0.0 = "unknown" per spec; no GX6250 Vulkan conformance submission
+	// exists, so there is no real version to put here.
+	p->conformanceVersion.major = 0;
+	p->conformanceVersion.minor = 0;
+	p->conformanceVersion.subminor = 0;
+	p->conformanceVersion.patch = 0;
+}
+
+static void fill_id_properties(VkPhysicalDeviceIDPropertiesKHR *p) {
+	memcpy(p->deviceUUID, shim_device_uuid, VK_UUID_SIZE);
+	p->deviceUUID[6] = (p->deviceUUID[6] & 0x0f) | 0x50;
+	p->deviceUUID[8] = (p->deviceUUID[8] & 0x3f) | 0x80;
+	memcpy(p->driverUUID, shim_driver_uuid, VK_UUID_SIZE);
+	p->driverUUID[6] = (p->driverUUID[6] & 0x0f) | 0x50;
+	p->driverUUID[8] = (p->driverUUID[8] & 0x3f) | 0x80;
+	p->deviceNodeMask = 0;
+	p->deviceLUIDValid = VK_FALSE;
+	memset(p->deviceLUID, 0, VK_LUID_SIZE);
+}
+
+// The blob's driverVersion is its Perforce changelist (4893595 = the
+// "@4893595" in DDK 1.9@4893595). Apps that bit-decode the field
+// VK_MAKE_VERSION-style render it as the nonsense "1.170.2971", and no IMG
+// packing is published, so every decoder guesses. Re-encode as the real
+// marketing version. The changelist is not lost: it stays in driverInfo.
+// ⚠️ If the vendor blob is ever swapped, bump this to the new DDK version —
+// 1.0-era apps key their own shader caches on driverVersion and would
+// otherwise never notice the driver changed.
+#define SHIM_DRIVER_VERSION VK_MAKE_VERSION(1, 9, 0)
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceProperties(
+	VkPhysicalDevice pd, VkPhysicalDeviceProperties *out) {
+	real_gpdp(pd, out);
+	out->driverVersion = SHIM_DRIVER_VERSION;
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceProperties2KHR(
+	VkPhysicalDevice pd, VkPhysicalDeviceProperties2KHR *out) {
+	resolve_identity_fns();
+	real_gpdp(pd, &out->properties);
+	out->properties.driverVersion = SHIM_DRIVER_VERSION;
+	for (VkBaseOutStructure *s = (VkBaseOutStructure *)out->pNext; s; s = s->pNext) {
+		switch (s->sType) {
+		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES_KHR:
+			fill_driver_properties((VkPhysicalDeviceDriverPropertiesKHR *)s);
+			break;
+		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES_KHR:
+			fill_id_properties((VkPhysicalDeviceIDPropertiesKHR *)s);
+			break;
+		default:
+			break; // not ours to fill; a 1.0 driver ignores unknown sTypes too
+		}
+	}
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceFeatures2KHR(
+	VkPhysicalDevice pd, VkPhysicalDeviceFeatures2KHR *out) {
+	resolve_identity_fns();
+	real_gpdf(pd, &out->features);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceFormatProperties2KHR(
+	VkPhysicalDevice pd, VkFormat format, VkFormatProperties2KHR *out) {
+	resolve_identity_fns();
+	real_gpdfp(pd, format, &out->formatProperties);
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_GetPhysicalDeviceImageFormatProperties2KHR(
+	VkPhysicalDevice pd, const VkPhysicalDeviceImageFormatInfo2KHR *info,
+	VkImageFormatProperties2KHR *out) {
+	resolve_identity_fns();
+	return real_gpdifp(pd, info->format, info->type, info->tiling,
+		info->usage, info->flags, &out->imageFormatProperties);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceQueueFamilyProperties2KHR(
+	VkPhysicalDevice pd, uint32_t *count, VkQueueFamilyProperties2KHR *out) {
+	resolve_identity_fns();
+	if (!out) {
+		real_gpdqfp(pd, count, NULL);
+		return;
+	}
+	uint32_t cap = *count;
+	VkQueueFamilyProperties *tmp = malloc(cap * sizeof *tmp);
+	if (!tmp) { *count = 0; return; }
+	real_gpdqfp(pd, &cap, tmp);
+	for (uint32_t i = 0; i < cap; i++)
+		out[i].queueFamilyProperties = tmp[i];
+	*count = cap;
+	free(tmp);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceMemoryProperties2KHR(
+	VkPhysicalDevice pd, VkPhysicalDeviceMemoryProperties2KHR *out) {
+	resolve_identity_fns();
+	real_gpdmp(pd, &out->memoryProperties);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceSparseImageFormatProperties2KHR(
+	VkPhysicalDevice pd, VkFormat format, VkImageType type,
+	VkSampleCountFlagBits samples, VkImageUsageFlags usage,
+	VkImageTiling tiling, uint32_t *count,
+	VkSparseImageFormatProperties2KHR *out) {
+	resolve_identity_fns();
+	if (!out) {
+		real_gpdsifp(pd, format, type, samples, usage, tiling, count, NULL);
+		return;
+	}
+	uint32_t cap = *count;
+	VkSparseImageFormatProperties *tmp = malloc(cap * sizeof *tmp);
+	if (!tmp) { *count = 0; return; }
+	real_gpdsifp(pd, format, type, samples, usage, tiling, &cap, tmp);
+	for (uint32_t i = 0; i < cap; i++)
+		out[i].properties = tmp[i];
+	*count = cap;
+	free(tmp);
+}
+
+// VK_KHR_external_fence_capabilities' one query: no external handles exist
+// on this blob, so every flag stays zero.
+static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceExternalFencePropertiesKHR(
+	VkPhysicalDevice pd, const VkPhysicalDeviceExternalFenceInfoKHR *info,
+	VkExternalFencePropertiesKHR *out) {
+	(void)pd; (void)info;
+	out->exportFromImportedHandleTypes = 0;
+	out->compatibleHandleTypes = 0;
+	out->externalFenceFeatures = 0;
+}
+
 // ---- proc-addr interposition ----------------------------------------------
 
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
@@ -1790,6 +2051,43 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetInstanceProcAddr(
 	if (!strcmp(name, "vkCreateInstance")) {
 		if (!real_cinst) real_cinst = (PFN_vkCreateInstance)real_gipa(inst, name);
 		return real_cinst ? (PFN_vkVoidFunction)shim_CreateInstance : NULL;
+	}
+	if (!strcmp(name, "vkEnumerateDeviceExtensionProperties")) {
+		if (!real_edep) real_edep = (PFN_vkEnumerateDeviceExtensionProperties)real_gipa(inst, name);
+		return real_edep ? (PFN_vkVoidFunction)shim_EnumerateDeviceExtensionProperties : NULL;
+	}
+	// Driver-identity block: physical-device queries, answered by the shim
+	// from 1.0 entry points. Both spellings are registered — the unsuffixed
+	// names are what the khr_alias fallthrough below would resolve to anyway.
+	if (prop_on("debug.xdplus.vkdrvinfo", &drvinfo)) {
+		if (!strcmp(name, "vkGetPhysicalDeviceProperties")) {
+			if (!real_gpdp) real_gpdp = (PFN_vkGetPhysicalDeviceProperties)real_gipa(inst, name);
+			return real_gpdp ? (PFN_vkVoidFunction)shim_GetPhysicalDeviceProperties : NULL;
+		}
+		if (!strcmp(name, "vkGetPhysicalDeviceProperties2KHR") ||
+			!strcmp(name, "vkGetPhysicalDeviceProperties2"))
+			return (PFN_vkVoidFunction)shim_GetPhysicalDeviceProperties2KHR;
+		if (!strcmp(name, "vkGetPhysicalDeviceFeatures2KHR") ||
+			!strcmp(name, "vkGetPhysicalDeviceFeatures2"))
+			return (PFN_vkVoidFunction)shim_GetPhysicalDeviceFeatures2KHR;
+		if (!strcmp(name, "vkGetPhysicalDeviceFormatProperties2KHR") ||
+			!strcmp(name, "vkGetPhysicalDeviceFormatProperties2"))
+			return (PFN_vkVoidFunction)shim_GetPhysicalDeviceFormatProperties2KHR;
+		if (!strcmp(name, "vkGetPhysicalDeviceImageFormatProperties2KHR") ||
+			!strcmp(name, "vkGetPhysicalDeviceImageFormatProperties2"))
+			return (PFN_vkVoidFunction)shim_GetPhysicalDeviceImageFormatProperties2KHR;
+		if (!strcmp(name, "vkGetPhysicalDeviceQueueFamilyProperties2KHR") ||
+			!strcmp(name, "vkGetPhysicalDeviceQueueFamilyProperties2"))
+			return (PFN_vkVoidFunction)shim_GetPhysicalDeviceQueueFamilyProperties2KHR;
+		if (!strcmp(name, "vkGetPhysicalDeviceMemoryProperties2KHR") ||
+			!strcmp(name, "vkGetPhysicalDeviceMemoryProperties2"))
+			return (PFN_vkVoidFunction)shim_GetPhysicalDeviceMemoryProperties2KHR;
+		if (!strcmp(name, "vkGetPhysicalDeviceSparseImageFormatProperties2KHR") ||
+			!strcmp(name, "vkGetPhysicalDeviceSparseImageFormatProperties2"))
+			return (PFN_vkVoidFunction)shim_GetPhysicalDeviceSparseImageFormatProperties2KHR;
+		if (!strcmp(name, "vkGetPhysicalDeviceExternalFencePropertiesKHR") ||
+			!strcmp(name, "vkGetPhysicalDeviceExternalFenceProperties"))
+			return (PFN_vkVoidFunction)shim_GetPhysicalDeviceExternalFencePropertiesKHR;
 	}
 	PFN_vkVoidFunction f = real_gipa(inst, name);
 	if (!f && prop_on("debug.xdplus.vkkhralias", &khr_alias)) {
