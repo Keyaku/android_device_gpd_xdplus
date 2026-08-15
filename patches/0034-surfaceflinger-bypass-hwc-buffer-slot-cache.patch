@@ -1,0 +1,81 @@
+From b8b1fbd3bc86303d5e6e37fb12c4ae19fbb6185c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 26 Jul 2026 19:13:50 +0100
+Subject: [PATCH] SurfaceFlinger: switch to bypass the HWC buffer-slot cache
+
+An earlier tracing pass showed SurfaceFlinger keeps handing HWC ~30 fresh buffers a second
+for display 0 while the HDMI mirror runs, yet the kernel reprograms OVL0
+every frame from one unchanging address. Since SF sends a null buffer once
+a slot is cached and lets the composer resolve the slot from its own
+per-layer table, a stale table on the vendor side would have explained
+that exactly. This switch keeps sending the real handle every frame, which
+a stale composer-side cache could not survive.
+
+Result: it does not help. With the bypass on, SF sends a real handle on
+every call (nullbuf and earlyout both drop to 0, confirming the switch
+works) and OVL0 still stays pinned -- 0x18400000 across the whole window
+while the buffer index climbs 3115 -> 3270. So the vendor composer is
+discarding buffers handed to it directly, and its slot cache is not the
+defect. Kept, default off, because it cleanly rules that theory out and
+costs a handle transfer per layer per frame when enabled.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: I8953300c20c0bf6dd98a858123e7aa49d23890e1
+---
+ .../CompositionEngine/src/HwcBufferCache.cpp  | 32 ++++++++++++++++++-
+ 1 file changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/services/surfaceflinger/CompositionEngine/src/HwcBufferCache.cpp b/services/surfaceflinger/CompositionEngine/src/HwcBufferCache.cpp
+index cedc333ab8..6bc5b7d887 100644
+--- a/services/surfaceflinger/CompositionEngine/src/HwcBufferCache.cpp
++++ b/services/surfaceflinger/CompositionEngine/src/HwcBufferCache.cpp
+@@ -26,7 +26,37 @@
+ // TODO(b/129481165): remove the #pragma below and fix conversion issues
+ #pragma clang diagnostic pop // ignored "-Wconversion"
+ 
++#include <cutils/properties.h>
++#include <utils/Timers.h>
++
++#include <atomic>
++
+ namespace android::compositionengine::impl {
++namespace {
++
++// While the HDMI mirror runs, the built-in panel freezes with its overlay
++// input pinned to one address, even though SurfaceFlinger keeps handing HWC ~30
++// fresh buffers a second for display 0 and the kernel keeps receiving
++// fresh buffer indices. Once a slot is cached we send a null buffer and
++// let the composer resolve the slot from its own per-layer table, so a stale
++// table on the vendor side would produce exactly that: new index, old buffer.
++// This switch keeps sending the real handle every frame, which a stale
++// composer-side cache cannot survive. Costs a handle transfer per layer per
++// frame, so it stays off unless someone asks for it.
++bool xdplusBypassHwcBufferCache() {
++    static std::atomic<bool> sEnabled{false};
++    static std::atomic<nsecs_t> sNextCheck{0};
++
++    const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
++    if (now >= sNextCheck.load(std::memory_order_relaxed)) {
++        sNextCheck.store(now + s2ns(1), std::memory_order_relaxed);
++        sEnabled.store(property_get_bool("persist.sys.xdplus.hwc_buffer_cache_bypass", 0),
++                       std::memory_order_relaxed);
++    }
++    return sEnabled.load(std::memory_order_relaxed);
++}
++
++} // namespace
+ 
+ HwcBufferCache::HwcBufferCache() {
+     std::fill(std::begin(mBuffers), std::end(mBuffers), wp<GraphicBuffer>(nullptr));
+@@ -44,7 +74,7 @@ void HwcBufferCache::getHwcBuffer(int slot, const sp<GraphicBuffer>& buffer, uin
+ 
+     auto& currentBuffer = mBuffers[*outSlot];
+     wp<GraphicBuffer> weakCopy(buffer);
+-    if (currentBuffer == weakCopy) {
++    if (currentBuffer == weakCopy && !xdplusBypassHwcBufferCache()) {
+         // already cached in HWC, skip sending the buffer
+         *outBuffer = nullptr;
+     } else {
+-- 
+2.55.0
+
