@@ -1,0 +1,170 @@
+From 36ba720f418e7d5301a34a741e182b3b51a64ad8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 26 Jul 2026 18:43:58 +0100
+Subject: [PATCH] SurfaceFlinger: trace per-display setLayerBuffer traffic
+
+The built-in panel freezes while the HDMI mirror runs, with the kernel
+reprogramming OVL0 every frame from one unchanging address even though it
+keeps receiving fresh buffer indices for display 0. That left one question
+only SurfaceFlinger could answer: is SF still handing HWC new buffers for
+the panel once display 1 joins, or has it stopped?
+
+Count, per display and per second, how many `Layer::setBuffer()` calls
+carry a buffer different from that layer's previous one. Because SF passes
+a null buffer once a slot is cached composer-side, "different" has to mean
+the (slot, handle) pair changed, not the handle alone.
+
+Off unless `persist.sys.xdplus.layerbuf_log` is set. The property is
+re-read at most once a second, so the disabled hot path costs one relaxed
+atomic load.
+
+Changes:
+- `Layer::setBuffer()` counts calls, buffer changes, null buffers and cache early-outs per display, emitting one `[XDPLUS-SLB]` line per display per second.
+- `HWC2::impl::Layer` gains `mXdplusLastHandle`/`mXdplusLastSlot` to remember what was last sent for that layer.
+
+Answer it produced: SF is innocent. With the mirror up it feeds display 0
+120 calls/s with ~30 buffer changes/s -- identical to display 1 -- while
+the kernel simultaneously reports OVL0 pinned at one address.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: Iad0909db13257cab69e8ef4f409ca45862e295ae
+---
+ .../surfaceflinger/DisplayHardware/HWC2.cpp   | 79 ++++++++++++++++++-
+ .../surfaceflinger/DisplayHardware/HWC2.h     |  6 ++
+ 2 files changed, 84 insertions(+), 1 deletion(-)
+
+diff --git a/services/surfaceflinger/DisplayHardware/HWC2.cpp b/services/surfaceflinger/DisplayHardware/HWC2.cpp
+index 08559bd939..68f6f010b4 100644
+--- a/services/surfaceflinger/DisplayHardware/HWC2.cpp
++++ b/services/surfaceflinger/DisplayHardware/HWC2.cpp
+@@ -32,9 +32,15 @@
+ 
+ #include <android/configuration.h>
+ 
++#include <cutils/properties.h>
++#include <utils/Timers.h>
++
+ #include <inttypes.h>
+ #include <algorithm>
++#include <atomic>
+ #include <iterator>
++#include <map>
++#include <mutex>
+ #include <set>
+ 
+ #include "../Promise.h"
+@@ -564,7 +570,7 @@ Error Display::setOutputBuffer(const sp<GraphicBuffer>& buffer,
+         const sp<Fence>& releaseFence)
+ {
+     int32_t fenceFd = releaseFence->dup();
+-    auto handle = buffer->getNativeBuffer()->handle;
++    auto handle = buffer->handle;
+     auto intError = mComposer.setOutputBuffer(mId, handle, fenceFd);
+     close(fenceFd);
+     return static_cast<Error>(intError);
+@@ -777,14 +783,85 @@ Error Layer::setCursorPosition(int32_t x, int32_t y)
+     return static_cast<Error>(intError);
+ }
+ 
++// Diagnostic: while the HDMI mirror runs, the built-in panel freezes with
++// its OVL input pinned to one address even though the kernel keeps receiving
++// fresh buffer indices for display 0. That leaves one open question SF can
++// answer directly: is SurfaceFlinger still handing HWC *new* buffer handles for
++// the panel's layers once display 1 joins, or has it stopped? Count, per
++// display and per second, how many setBuffer() calls carry a handle that
++// differs from the previous one. Off unless persist.sys.xdplus.layerbuf_log is
++// set; the property is re-read at most once a second so the hot path stays a
++// single relaxed atomic load when disabled.
++namespace {
++
++bool xdplusLayerBufLogEnabled() {
++    static std::atomic<bool> sEnabled{false};
++    static std::atomic<nsecs_t> sNextCheck{0};
++
++    const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
++    if (now >= sNextCheck.load(std::memory_order_relaxed)) {
++        sNextCheck.store(now + s2ns(1), std::memory_order_relaxed);
++        sEnabled.store(property_get_bool("persist.sys.xdplus.layerbuf_log", 0),
++                       std::memory_order_relaxed);
++    }
++    return sEnabled.load(std::memory_order_relaxed);
++}
++
++void xdplusCountLayerBuffer(hal::HWDisplayId displayId, hal::HWLayerId layerId, uint32_t slot,
++                            const native_handle_t* handle, bool changed, bool earlyOut) {
++    struct Stats {
++        nsecs_t nextReport = 0;
++        uint32_t calls = 0;
++        uint32_t newBuf = 0;
++        uint32_t nullBuf = 0;
++        uint32_t earlyOut = 0;
++    };
++    static std::mutex sLock;
++    static std::map<hal::HWDisplayId, Stats> sStats;
++
++    std::lock_guard<std::mutex> lock(sLock);
++    Stats& s = sStats[displayId];
++    s.calls++;
++    if (changed) s.newBuf++;
++    if (handle == nullptr) s.nullBuf++;
++    if (earlyOut) s.earlyOut++;
++
++    const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
++    if (now < s.nextReport) return;
++    s.nextReport = now + s2ns(1);
++    ALOGI("[XDPLUS-SLB] dpy=%" PRIu64 " 1s: calls=%u newbuf=%u nullbuf=%u earlyout=%u"
++          " | last L%" PRIu64 " slot=%u handle=%p",
++          displayId, s.calls, s.newBuf, s.nullBuf, s.earlyOut, layerId, slot, handle);
++    s.calls = s.newBuf = s.nullBuf = s.earlyOut = 0;
++}
++
++} // namespace
++
+ Error Layer::setBuffer(uint32_t slot, const sp<GraphicBuffer>& buffer,
+         const sp<Fence>& acquireFence)
+ {
++    const bool xdplusLog = xdplusLayerBufLogEnabled();
++    const native_handle_t* xdplusHandle = buffer == nullptr ? nullptr : buffer->handle;
++    // SF hands HWC a null buffer once a slot is cached composer-side, so the slot
++    // index - not the handle - is what identifies the buffer from then on.
++    const bool xdplusChanged = (xdplusHandle != mXdplusLastHandle) || (slot != mXdplusLastSlot);
++
+     if (buffer == nullptr && mBufferSlot == slot) {
++        if (xdplusLog) {
++            xdplusCountLayerBuffer(mDisplayId, mId, slot, xdplusHandle, /*changed=*/false,
++                                   /*earlyOut=*/true);
++        }
+         return Error::NONE;
+     }
+     mBufferSlot = slot;
+ 
++    if (xdplusLog) {
++        xdplusCountLayerBuffer(mDisplayId, mId, slot, xdplusHandle, xdplusChanged,
++                               /*earlyOut=*/false);
++    }
++    mXdplusLastHandle = xdplusHandle;
++    mXdplusLastSlot = slot;
++
+     int32_t fenceFd = acquireFence->dup();
+     auto intError = mComposer.setLayerBuffer(mDisplayId, mId, slot, buffer,
+                                              fenceFd);
+diff --git a/services/surfaceflinger/DisplayHardware/HWC2.h b/services/surfaceflinger/DisplayHardware/HWC2.h
+index 6819ff43d2..a2fb5c99dc 100644
+--- a/services/surfaceflinger/DisplayHardware/HWC2.h
++++ b/services/surfaceflinger/DisplayHardware/HWC2.h
+@@ -449,6 +449,12 @@ private:
+     android::HdrMetadata mHdrMetadata;
+     android::mat4 mColorMatrix;
+     uint32_t mBufferSlot;
++
++    // Last buffer handle handed to HWC for this layer, so setBuffer() can tell
++    // "SF submitted a fresh buffer" from "SF re-submitted the same one".
++    // Diagnostic only, gated on persist.sys.xdplus.layerbuf_log.
++    const native_handle_t* mXdplusLastHandle = nullptr;
++    uint32_t mXdplusLastSlot = UINT32_MAX;
+ };
+ 
+ } // namespace impl
+-- 
+2.55.0
+
