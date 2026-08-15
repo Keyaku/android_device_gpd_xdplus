@@ -1,0 +1,79 @@
+From 0bce8c15b54e836c52d466642d28524190406269 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sat, 15 Aug 2026 22:18:59 +0100
+Subject: [PATCH] SurfaceFlinger: keep a mirroring external display off client
+ composition
+
+The MTK composer decides mirroring by comparing the two displays' visible-layer
+lists and abandons the mirror once the external carries a framebuffer target. A
+working mirror is asymmetric -- primary fbt=1, external fbt=0 -- and forcing
+client composition on all outputs gives the external an FBT it never otherwise
+has, at which point the composer reports no mirror source and the sink freezes on
+an abandoned buffer.
+
+Gated on persist.sys.xdplus.mirror_no_client so it can be A/B'd live.
+
+Changes:
+- `Display.cpp`: add `isMirroringExternal()` and force device composition for such a display in `chooseCompositionStrategy()`
+- `Display.h`: declare it
+
+Change-Id: I24cba1711db2a50ebd63a2143ff976bd92246264
+---
+ .../include/compositionengine/impl/Display.h  |  1 +
+ .../CompositionEngine/src/Display.cpp         | 21 +++++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/services/surfaceflinger/CompositionEngine/include/compositionengine/impl/Display.h b/services/surfaceflinger/CompositionEngine/include/compositionengine/impl/Display.h
+index 7a4f7383d0..b302eef57a 100644
+--- a/services/surfaceflinger/CompositionEngine/include/compositionengine/impl/Display.h
++++ b/services/surfaceflinger/CompositionEngine/include/compositionengine/impl/Display.h
+@@ -73,6 +73,7 @@ public:
+     using ClientTargetProperty = android::HWComposer::DeviceRequestedChanges::ClientTargetProperty;
+     virtual bool anyLayersRequireClientComposition() const;
+     virtual bool allLayersRequireClientComposition() const;
++    virtual bool isMirroringExternal() const;
+     virtual void applyChangedTypesToLayers(const ChangedTypes&);
+     virtual void applyDisplayRequests(const DisplayRequests&);
+     virtual void applyLayerRequestsToLayers(const LayerRequests&);
+diff --git a/services/surfaceflinger/CompositionEngine/src/Display.cpp b/services/surfaceflinger/CompositionEngine/src/Display.cpp
+index d201104810..df9996f789 100644
+--- a/services/surfaceflinger/CompositionEngine/src/Display.cpp
++++ b/services/surfaceflinger/CompositionEngine/src/Display.cpp
+@@ -26,6 +26,7 @@
+ #include <compositionengine/impl/OutputLayer.h>
+ #include <compositionengine/impl/RenderSurface.h>
+ 
++#include <cutils/properties.h>
+ #include <utils/Trace.h>
+ 
+ // TODO(b/129481165): remove the #pragma below and fix conversion issues
+@@ -266,6 +267,26 @@ void Display::chooseCompositionStrategy() {
+     auto& state = editState();
+     state.usesClientComposition = anyLayersRequireClientComposition();
+     state.usesDeviceComposition = !allLayersRequireClientComposition();
++
++    // The composer abandons the mirror once the external carries a framebuffer target.
++    if (isMirroringExternal() && state.usesClientComposition) {
++        state.usesClientComposition = false;
++        state.usesDeviceComposition = true;
++    }
++}
++
++bool Display::isMirroringExternal() const {
++    if (!mId || mIsVirtual) {
++        return false;
++    }
++    const auto& state = getState();
++    // A display with its own layer stack has content of its own and is not a mirror.
++    if (state.layerStackInternal || state.layerStackId != 0) {
++        return false;
++    }
++    static const bool enabled =
++            property_get_bool("persist.sys.xdplus.mirror_no_client", true);
++    return enabled;
+ }
+ 
+ bool Display::getSkipColorTransform() const {
+-- 
+2.55.0
+
