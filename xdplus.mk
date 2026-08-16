@@ -71,6 +71,10 @@ PRODUCT_COPY_FILES += \
 # /system/etc leaves the exec target as the shell.
 PRODUCT_PACKAGES += xdplus_tweaks xdplus_wifi_seed
 
+# Holds one 1x1 layer while a second display is attached, so an app whose visible
+# list collapses to a single layer cannot drop the mirror (see pinlayer/).
+PRODUCT_PACKAGES += xdplus_pinlayer
+
 # The in-Settings "GPD XD+" menu, as an app in this tree (see parts/). It was a
 # fork of packages/apps/Settings until 2026-08-09; Settings discovers the tile
 # through the app's manifest metadata, so nothing upstream is modified and the

@@ -21,6 +21,7 @@ public class XdPlusDisplaySettings extends XdPlusFragmentBase {
     private static final String KEY_HDMI_MIRROR_MODE = "xdplus_hdmi_mirror_mode";
     private static final String KEY_HDMI_RES = "xdplus_hdmi_res";
     private static final String KEY_HDMI_NOVSYNC = "xdplus_hdmi_novsync";
+    private static final String KEY_HDMI_PIN_LAYER = "xdplus_hdmi_pin_layer";
     private static final String KEY_HDMI_ZERO_ANIM = "xdplus_hdmi_zero_anim";
 
     // SurfaceFlinger reads this once at startup: 1 = forced validate for
@@ -37,6 +38,9 @@ public class XdPlusDisplaySettings extends XdPlusFragmentBase {
     // a rotating app producing a transform the overlay cannot express, which is
     // what drives the primary onto client composition and drops the mirror.
     private static final String PROP_HDMI_ZERO_ANIM = "persist.sys.xdplus.hdmi_zero_anim";
+    // Polled by the xdplus-mirrorpin service, so the toggle applies within a couple of
+    // seconds and needs no dispatch. Unset means on.
+    private static final String PROP_HDMI_PIN_LAYER = "persist.sys.xdplus.mirror_pin";
     // Read by PhoneWindowManager on every F12 (the spare "Gamepad Mapper"
     // button): when armed, that button bounces the display off/on to recover a
     // frozen pipeline. Applied live — the policy reads it per press.
@@ -60,6 +64,7 @@ public class XdPlusDisplaySettings extends XdPlusFragmentBase {
 
         // Consumed by the bring-up script, so there is nothing to poke here.
         bindSwitch(KEY_HDMI_NOVSYNC, PROP_HDMI_NOVSYNC);
+        bindSwitch(KEY_HDMI_PIN_LAYER, PROP_HDMI_PIN_LAYER, true);
         bindSwitch(KEY_HDMI_ZERO_ANIM, PROP_HDMI_ZERO_ANIM);
         bindList(KEY_HDMI_RES, PROP_HDMI_RES, "2");
     }

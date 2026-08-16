@@ -27,8 +27,13 @@ public abstract class XdPlusFragmentBase extends PreferenceFragment {
 
     /** Boolean property toggle: checked == property is set and not "0". */
     protected SwitchPreference bindSwitch(String key, String prop) {
+        return bindSwitch(key, prop, false);
+    }
+
+    /** As above, for a property whose unset state means on. */
+    protected SwitchPreference bindSwitch(String key, String prop, boolean def) {
         final SwitchPreference pref = (SwitchPreference) findPreference(key);
-        pref.setChecked(getBoolProp(prop));
+        pref.setChecked(getBoolProp(prop, def));
         pref.setOnPreferenceChangeListener((p, v) -> {
             SystemProperties.set(prop, ((Boolean) v) ? "1" : "0");
             return true;
@@ -56,7 +61,11 @@ public abstract class XdPlusFragmentBase extends PreferenceFragment {
     }
 
     protected static boolean getBoolProp(String prop) {
-        final String v = SystemProperties.get(prop, "0");
+        return getBoolProp(prop, false);
+    }
+
+    protected static boolean getBoolProp(String prop, boolean def) {
+        final String v = SystemProperties.get(prop, def ? "1" : "0");
         return !TextUtils.isEmpty(v) && !"0".equals(v);
     }
 }
