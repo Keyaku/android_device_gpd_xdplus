@@ -85,7 +85,7 @@ hdmi_up() {
 	fi
 
 	if [ "$(getprop persist.sys.xdplus.hdmi_force_validate)" != "0" ]; then
-		xlog "mirror mode not armed (hdmi_force_validate != 0 at boot) — enable 'HDMI mirror mode' in the GPD XD+ menu and reboot first"
+		xlog "mirror mode not armed (hdmi_force_validate != 0 at boot) — it defaults to 0 in system.prop, so something set it; clear it and reboot"
 		return 1
 	fi
 
@@ -179,7 +179,6 @@ hdmi_up() {
 		SMODE="$(sed -n 's/.*session_mode:\([0-9]*\).*/\1/p' /d/mtkfb 2>/dev/null | head -1)"
 		if [ "$SMODE" = 4 ]; then
 			xlog "HDMI mirror up (DECOUPLE_MIRROR, res=$RES)"
-			anim_zero_apply
 			return 0
 		fi
 		if [ -z "$SMODE" ]; then
@@ -196,9 +195,6 @@ hdmi_up() {
 	# All attempts missed. Tear down cleanly so the primary panel is not left wedged
 	# (a failed bringup must degrade to "working panel, no HDMI", never a black screen).
 	xlog "HDMI bringup FAILED after 3 attempts — safe teardown"
-	# An earlier bring-up may have zeroed the scales; a teardown must hand them
-	# back whether or not this attempt was the one that took them.
-	anim_zero_restore
 	echo fakecablein:disable > $H 2>/dev/null
 	$CTL power 0 2>/dev/null
 	$CTL disable 2>/dev/null
@@ -206,42 +202,11 @@ hdmi_up() {
 	return 1
 }
 
-# Optional: zero the three animation scales while the mirror is up.
-#
-# A rotation animation carries intermediate angles, and a layer whose composed
-# transform is not one of the eight HWC2 transforms comes back ROT_INVALID from
-# Transform::getOrientation(). SurfaceFlinger then has to render it itself, and
-# client composition on the primary is exactly what makes the vendor composer
-# abandon the mirror -- both screens freeze until the composer is bounced. With
-# the scales at 0 there is no intermediate transform and no such frame.
-#
-# ⚠️ All three must be zero: window_animation_scale alone leaves RotationLayer
-# carrying ROT_INVALID and changes nothing (measured).
-#
-# Off by default. This costs the user their animations, so it is a choice, not
-# a fix -- the launch-animation half of the same freeze is handled properly in
-# SurfaceFlinger and needs none of this.
-PROP_ZERO_ANIM=persist.sys.xdplus.hdmi_zero_anim
+# Retired: the mirror is kept through fullscreen apps by the xdplus-mirrorpin
+# service holding one layer, which costs the user nothing. This only hands back
+# scales an older build zeroed and left in a persist property.
 PROP_ANIM_SAVED=persist.sys.xdplus.anim_saved
 ANIM_KEYS="window_animation_scale transition_animation_scale animator_duration_scale"
-
-anim_get() {
-	v=$(settings get global "$1" 2>/dev/null)
-	# Unset reads back as the literal "null"; the framework default is 1.
-	case "$v" in ''|null) echo 1 ;; *) echo "$v" ;; esac
-}
-
-anim_zero_apply() {
-	[ "$(getprop $PROP_ZERO_ANIM)" = "true" ] || return 0
-	# Save once only. A second bring-up must not capture the zeros we just wrote
-	# and make them the values we "restore" on unplug.
-	[ -z "$(getprop $PROP_ANIM_SAVED)" ] || return 0
-	saved=
-	for k in $ANIM_KEYS; do saved="$saved$(anim_get "$k") "; done
-	setprop $PROP_ANIM_SAVED "${saved% }"
-	for k in $ANIM_KEYS; do settings put global "$k" 0 2>/dev/null; done
-	xlog "animation scales zeroed for the mirror (saved: ${saved% })"
-}
 
 anim_zero_restore() {
 	saved=$(getprop $PROP_ANIM_SAVED)
@@ -256,7 +221,6 @@ anim_zero_restore() {
 }
 
 hdmi_down() {
-	anim_zero_restore
 	[ -x "$CTL" ] && { $CTL power 0; $CTL disable; }
 	# Park the mirror queue gate so the next plain hotplug does not create the
 	# mirror output queue against a torn-down path.
@@ -348,6 +312,7 @@ CMD="$1"
 prune_retired_props() {
 	for p in \
 		persist.sys.xdplus.hdmi_unfreeze \
+		persist.sys.xdplus.hdmi_zero_anim \
 		persist.sys.wifi_standard_11n_fallback \
 		persist.sys.xdplus.vkcachedirmax
 	do
