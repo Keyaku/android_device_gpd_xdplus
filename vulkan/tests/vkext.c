@@ -209,9 +209,125 @@ static int probe_procaddrs(VkInstance inst, VkDevice dev) {
 	return 0;
 }
 
+// A compute shader that does nothing, so a pipeline can be compiled purely to
+// make the shim create its pipeline cache -- which is what the two-device test
+// needs to exercise. Source: `#version 450 / local_size_x=1 / void main() {}`.
+static const uint32_t nul_comp_spv[] = {
+	0x07230203, 0x00010000, 0x000d000b, 0x0000000a, 0x00000000, 0x00020011,
+	0x00000001, 0x0006000b, 0x00000001, 0x4c534c47, 0x6474732e, 0x3035342e,
+	0x00000000, 0x0003000e, 0x00000000, 0x00000001, 0x0005000f, 0x00000005,
+	0x00000004, 0x6e69616d, 0x00000000, 0x00060010, 0x00000004, 0x00000011,
+	0x00000001, 0x00000001, 0x00000001, 0x00030003, 0x00000002, 0x000001c2,
+	0x000a0004, 0x475f4c47, 0x4c474f4f, 0x70635f45, 0x74735f70, 0x5f656c79,
+	0x656e696c, 0x7269645f, 0x69746365, 0x00006576, 0x00080004, 0x475f4c47,
+	0x4c474f4f, 0x6e695f45, 0x64756c63, 0x69645f65, 0x74636572, 0x00657669,
+	0x00040005, 0x00000004, 0x6e69616d, 0x00000000, 0x00040047, 0x00000009,
+	0x0000000b, 0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+	0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000000, 0x00040017,
+	0x00000007, 0x00000006, 0x00000003, 0x0004002b, 0x00000006, 0x00000008,
+	0x00000001, 0x0006002c, 0x00000007, 0x00000009, 0x00000008, 0x00000008,
+	0x00000008, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+	0x000200f8, 0x00000005, 0x000100fd, 0x00010038,
+};
+
+// Two live VkDevices in one process. The shim's cache state was a single
+// global set until 2026-08-16, so the second device evicted the first's cache
+// unfreed; and cb_to_device fell back to the most recently created device,
+// which silently allocated one device's scratch on the other. Neither is
+// visible with one device, which is why neither was ever observed.
+//
+// ⚠️ This does NOT test concurrent processes -- the shim's state is static in
+// a shared library, so processes never shared any of it. One process, two
+// devices, is the whole exposure.
+static int probe_two_devices(VkPhysicalDevice pd, VkInstance inst, VkDevice first) {
+	printf("\n---- two live devices in one process ----\n");
+	float prio = 1.0f;
+	VkDeviceQueueCreateInfo q = {
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+		.queueFamilyIndex = 0, .queueCount = 1, .pQueuePriorities = &prio };
+	VkDeviceCreateInfo dci = {
+		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		.queueCreateInfoCount = 1, .pQueueCreateInfos = &q };
+	// Force the shim to create its pipeline cache for the FIRST device before
+	// the second exists -- ensure_disk_cache only runs inside a compile, so
+	// without this the cache path is never entered and the bug this probe
+	// exists for cannot show up.
+	VkShaderModuleCreateInfo smci = {
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = sizeof nul_comp_spv, .pCode = nul_comp_spv };
+	VkShaderModule sm = VK_NULL_HANDLE;
+	VkPipelineLayout pl = VK_NULL_HANDLE;
+	VkPipeline pipe = VK_NULL_HANDLE;
+	if (vkCreateShaderModule(first, &smci, NULL, &sm) == VK_SUCCESS) {
+		VkPipelineLayoutCreateInfo plci = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+		if (vkCreatePipelineLayout(first, &plci, NULL, &pl) == VK_SUCCESS) {
+			VkComputePipelineCreateInfo cpci = {
+				.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+				.stage = { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+					.stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = sm, .pName = "main" },
+				.layout = pl };
+			VkResult pr = vkCreateComputePipelines(first, VK_NULL_HANDLE, 1, &cpci, NULL, &pipe);
+			printf("  primed the first device's pipeline cache -> %s\n",
+				pr == VK_SUCCESS ? "PASS" : "compile failed (cache still created)");
+		}
+	}
+
+	VkDevice second = VK_NULL_HANDLE;
+	VkResult r = vkCreateDevice(pd, &dci, NULL, &second);
+	if (r != VK_SUCCESS) { printf("  second vkCreateDevice -> %d FAIL\n", r); return 1; }
+	printf("  two devices live: %p and %p -> PASS\n", (void *)first, (void *)second);
+
+	// Both must still serve their own work. A buffer per device, sized
+	// differently so a crossed answer is visible rather than coincidental.
+	int bad = 0;
+	VkDevice devs[2] = { first, second };
+	VkDeviceSize sizes[2] = { 4096, 65536 };
+	for (int i = 0; i < 2; i++) {
+		VkBufferCreateInfo bci = {
+			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			.size = sizes[i], .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE };
+		VkBuffer b;
+		if (vkCreateBuffer(devs[i], &bci, NULL, &b) != VK_SUCCESS) {
+			printf("  device %d: vkCreateBuffer FAIL\n", i); bad = 1; continue;
+		}
+		VkMemoryRequirements mr;
+		vkGetBufferMemoryRequirements(devs[i], b, &mr);
+		printf("  device %d: buffer %llu -> requirement %llu %s\n", i,
+			(unsigned long long)sizes[i], (unsigned long long)mr.size,
+			mr.size >= sizes[i] ? "PASS" : "FAIL");
+		if (mr.size < sizes[i]) bad = 1;
+		vkDestroyBuffer(devs[i], b, NULL);
+	}
+
+	// Destroying the second must leave the first usable -- the old code freed
+	// whatever single cache it held on any device destroy.
+	vkDestroyDevice(second, NULL);
+	if (pipe) vkDestroyPipeline(first, pipe, NULL);
+	if (pl) vkDestroyPipelineLayout(first, pl, NULL);
+	if (sm) vkDestroyShaderModule(first, sm, NULL);
+	VkBufferCreateInfo bci = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = 4096, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE };
+	VkBuffer b;
+	if (vkCreateBuffer(first, &bci, NULL, &b) == VK_SUCCESS) {
+		printf("  first device still usable after destroying the second -> PASS\n");
+		vkDestroyBuffer(first, b, NULL);
+	} else {
+		printf("  first device unusable after destroying the second -> FAIL\n");
+		bad = 1;
+	}
+	printf("\n⚠️ check logcat for 'live cache' / 'recycled device handle': the old\n"
+		"   shim logged a cache eviction here, the fixed one must not.\n");
+	return bad;
+}
+
 int main(int argc, char **argv) {
 	int push_mode = (argc > 1 && !strcmp(argv[1], "push"));
 	int proc_mode = (argc > 1 && !strcmp(argv[1], "procaddr"));
+	int two_mode = (argc > 1 && !strcmp(argv[1], "twodev"));
 	VkApplicationInfo app = {
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 		.pApplicationName = "vkext",
@@ -263,6 +379,12 @@ int main(int argc, char **argv) {
 	CHECK(vkCreateDevice(pd, &dci, NULL, &dev), "vkCreateDevice(all extensions)");
 	printf("  PASS: device created\n");
 
+	if (two_mode) {
+		int r = probe_two_devices(pd, inst, dev);
+		vkDestroyDevice(dev, NULL);
+		vkDestroyInstance(inst, NULL);
+		return r;
+	}
 	if (proc_mode) {
 		int r = probe_procaddrs(inst, dev);
 		vkDestroyDevice(dev, NULL);
