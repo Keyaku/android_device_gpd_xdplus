@@ -107,9 +107,34 @@ int32_t displayState(hwc2_display_t display) {
 	return *reinterpret_cast<int32_t*>(reinterpret_cast<uintptr_t>(d) + DISPLAY_STATE_OFF);
 }
 
+void setDisplayState(hwc2_display_t display, int32_t state) {
+	void* d = displayObject(display);
+	if (!d) return;
+	*reinterpret_cast<int32_t*>(reinterpret_cast<uintptr_t>(d) + DISPLAY_STATE_OFF) = state;
+}
+
+// Entered above CSV the blob's validate skips its work and reports no changed types, so
+// SurfaceFlinger never learns the external needs client composition and stops feeding it a
+// client target. Writing the state back to CSV makes the call do its work.
+bool forceExternalValidate() {
+	static std::atomic<bool> value{false};
+	static std::atomic<unsigned> tick{0};
+	return cachedProperty("persist.sys.xdplus.hwcshim_forcevali", &value, &tick);
+}
+
 int32_t onValidate(hwc2_device_t* device, hwc2_display_t display, uint32_t* outNumTypes,
 				   uint32_t* outNumRequests) {
-	const int32_t before = displayState(display);
+	int32_t before = displayState(display);
+
+	if (!bypass() && display != HWC_DISPLAY_PRIMARY && before > STATE_NOOP_ABOVE &&
+		forceExternalValidate()) {
+		setDisplayState(display, STATE_NOOP_ABOVE);
+		if (logging()) {
+			ALOGD("validate(%" PRIu64 ") state %d forced to %d", display, before,
+				  STATE_NOOP_ABOVE);
+		}
+		before = STATE_NOOP_ABOVE;
+	}
 
 	// A negative state means the offsets did not resolve, so nothing is known about what
 	// this call would do -- pass it through rather than guess.
