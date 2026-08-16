@@ -22,7 +22,7 @@ The search is a binary search for the largest descriptor count a push-flagged la
 
 ⚠️ **The first gate fires on this driver, at both object-creation points, so this route is CLOSED — do not re-derive it.** The blob accepts a push-flagged layout of 65536 descriptors, and a pipeline layout built from it, without complaint; it also accepts 65536 uniform buffers in a *plain* layout, well past its own reported `maxDescriptorSetUniformBuffers` of 256. It simply does not diagnose descriptor-set limits at creation time, so any boundary a search finds is the top of the search range and nothing else.
 
-The functional test below was that remaining route; it ran on 2026-08-16 and closed it too. **`maxPushDescriptors` stays 0 unless someone decides otherwise**, which is the safe direction: an app that reads zero falls back to ordinary descriptor sets, and an app that calls `vkCmdPushDescriptorSetKHR` without querying is unaffected either way. ⚠️ Reporting a guessed value here is *more* dangerous than on a normal driver, precisely because nothing in this one will catch a claim that is too high.
+The functional test below was that remaining route; it ran on 2026-08-16 and closed it too, but it established enough of a floor to act on — the shim now reports **32**. ⚠️ That is a decision resting on measurement, not a value the driver supplied, and nothing in this driver will catch a caller who exceeds it, so treat it as a floor rather than a ceiling if it is ever revisited.
 
 ## `pushfunc.sh` — the functional test, run 2026-08-16, and what it settled
 
@@ -34,6 +34,8 @@ The functional test below was that remaining route; it ran on 2026-08-16 and clo
 - **The driver's memory suballocator crashes around 36–40 descriptors, intermittently.** `SIGSEGV` on a null deref inside `PVRSRVSubAllocDeviceMem` in `/system/vendor/lib64/libsrv_um.so`, called from the blob. ⚠️ **The control crashes in the same function**, and ⚠️ **the threshold is not repeatable**: N=36 and N=37 measured `0 0 0 0 0` in one sweep and `139 139 0 139 139` minutes later. N≤34 was solid across every repetition, N≥38 always crashed.
 
 **So the functional route is closed too, for the same reason the creation-time route was: nothing the driver does marks a push-descriptor boundary.** What the run *did* establish is a floor by demonstration — **32 and 33 push descriptors work correctly and repeatably** (5/5 at 32), well inside the region where nothing misbehaves.
+
+⭐ **Decision, 2026-08-16: the shim reports 32**, on that evidence plus its being the conventional value for this vendor. `debug.xdplus.vkpushlimit=0` restores the old behaviour of reporting nothing. `run.sh` prints the value back, so the gate is checkable in both positions.
 
 ⚠️ **A pass above the limit proves nothing.** Exceeding `maxPushDescriptors` is undefined behaviour and this driver validates nothing, so "N worked" is not evidence that N is within the limit. That is why this measured a floor and not the limit.
 

@@ -247,14 +247,23 @@ int main(int argc, char **argv) {
 		VkPhysicalDeviceMaintenance3PropertiesKHR m3 = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES_KHR,
 		};
+		VkPhysicalDevicePushDescriptorPropertiesKHR pdp = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR,
+			.pNext = &m3,
+		};
 		VkPhysicalDeviceProperties2KHR p2 = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR,
-			.pNext = &m3,
+			.pNext = &pdp,
 		};
 		gpdp2(pd, &p2);
 		printf("\nmaintenance3: maxPerSetDescriptors=%u maxMemoryAllocationSize=%llu\n",
 			m3.maxPerSetDescriptors,
 			(unsigned long long)m3.maxMemoryAllocationSize);
+		// 0 means the shim is not filling it: debug.xdplus.vkpushlimit=0, or a
+		// shim predating the measured floor.
+		printf("push_descriptor: maxPushDescriptors=%u -> %s\n",
+			pdp.maxPushDescriptors,
+			pdp.maxPushDescriptors ? "PASS" : "not reported");
 		if (!m3.maxPerSetDescriptors || !m3.maxMemoryAllocationSize)
 			printf("  FAIL: zero -- properties not filled\n");
 		else

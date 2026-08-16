@@ -1931,6 +1931,24 @@ static void fill_driver_properties(VkPhysicalDeviceDriverPropertiesKHR *p) {
 	p->conformanceVersion.patch = 0;
 }
 
+// VK_KHR_push_descriptor is the blob's own extension; only its limit was
+// unreachable, because that is queryable solely through properties2, which a
+// 1.0.49 driver lacks. Apps therefore read 0 and gave the feature up.
+//
+// ⚠️ 32 is a MEASURED FLOOR, not a value read from the driver, and nothing
+// here can validate a caller that exceeds it. The driver cannot be asked and
+// no boundary is observable in either direction; 32 and 33 were shown to work
+// repeatably, with storage buffers in a compute shader only. Method, the two
+// confounds and the non-determinism: vulkan/tests/README.md.
+//
+// debug.xdplus.vkpushlimit=0 restores the old behaviour of reporting nothing.
+#define SHIM_MAX_PUSH_DESCRIPTORS 32u
+static int pushlimit = -1;
+
+static void fill_push_descriptor_properties(VkPhysicalDevicePushDescriptorPropertiesKHR *p) {
+	p->maxPushDescriptors = SHIM_MAX_PUSH_DESCRIPTORS;
+}
+
 static void fill_id_properties(VkPhysicalDeviceIDPropertiesKHR *p) {
 	memcpy(p->deviceUUID, shim_device_uuid, VK_UUID_SIZE);
 	p->deviceUUID[6] = (p->deviceUUID[6] & 0x0f) | 0x50;
@@ -1971,6 +1989,13 @@ static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceProperties2KHR(
 			break;
 		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES_KHR:
 			fill_id_properties((VkPhysicalDeviceIDPropertiesKHR *)s);
+			break;
+		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR:
+			// The extension is the blob's own; only the query transport was
+			// missing, so this fills a gap rather than claiming a feature.
+			if (prop_on("debug.xdplus.vkpushlimit", &pushlimit))
+				fill_push_descriptor_properties(
+					(VkPhysicalDevicePushDescriptorPropertiesKHR *)s);
 			break;
 		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES_KHR:
 			if (prop_on("debug.xdplus.vkmemext", &memext))
