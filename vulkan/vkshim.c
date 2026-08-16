@@ -162,6 +162,12 @@ static PFN_vkGetPhysicalDeviceFormatProperties real_gpdfp;
 static PFN_vkGetPhysicalDeviceImageFormatProperties real_gpdifp;
 static PFN_vkGetPhysicalDeviceQueueFamilyProperties real_gpdqfp;
 static PFN_vkGetPhysicalDeviceSparseImageFormatProperties real_gpdsifp;
+// ⚠️ Single-valued on purpose, and left that way after the per-device cache
+// work: these are only ever used to resolve entry points and to read physical
+// device properties, both of which are identical for every device on this
+// hardware (one GPU, one instance in every app seen). Keying them per device
+// would add lookups on hot paths and buy nothing. shim_dev is the exception
+// that mattered and it is no longer used as a fallback — see cb_to_device.
 static VkInstance shim_instance;
 static VkPhysicalDeviceMemoryProperties mem_props;
 static int mem_props_loaded;
@@ -253,24 +259,64 @@ static void forget_img(VkImage img) {
 // render/input thread ended up parked on this mutex behind a SwanStation core
 // compile, so input dispatch timed out. Never put a compile inside this lock.
 static pthread_mutex_t cache_mu = PTHREAD_MUTEX_INITIALIZER;
-static VkDevice cache_dev;
-static VkPipelineCache disk_cache;
-static char cache_path[192];
-static size_t last_saved_size;
-static unsigned long long last_save_ns;
-static int cache_frozen;
-// Non-zero while some batch is compiling with disk_cache; nothing else may hand
-// it out, merge into it or serialise it until that batch is done.
-static int master_in_use;
+
 // Scratch caches from batches that finished while the master was busy, waiting
 // to be merged. Bounded: past this many, a scratch is dropped rather than
 // queued, which costs one recompile of that batch on a later run and nothing else.
 #define PENDING_MAX 8
-static VkPipelineCache pending_merge[PENDING_MAX];
-static unsigned pending_count;
-static int warned_pending_full;
+#define DEV_CACHE_MAX 4
+
+// All of this was one global set until 2026-08-16, which made a second live
+// VkDevice evict the first's cache unfreed. Keyed per device now.
+// ⚠️ This is NOT about concurrent processes — these are statics in a shared
+// library, so every process already gets its own private copy and two games
+// running Vulkan side by side never shared any of it.
+struct dev_cache {
+	VkDevice dev;
+	VkPipelineCache pc;
+	char path[192];
+	size_t last_saved_size;
+	unsigned long long last_save_ns;
+	int frozen;
+	// Non-zero while some batch is compiling with pc; nothing else may hand it
+	// out, merge into it or serialise it until that batch is done.
+	int master_in_use;
+	VkPipelineCache pending[PENDING_MAX];
+	unsigned pending_count;
+	int warned_pending_full;
+};
+static struct dev_cache dev_caches[DEV_CACHE_MAX];
+static int warned_dev_cache_full;
 static unsigned compiled_count;
 static int slow_session;
+
+// All three are called with cache_mu held.
+static struct dev_cache *cache_lookup(VkDevice dev) {
+	if (!dev) return NULL;
+	for (int i = 0; i < DEV_CACHE_MAX; i++)
+		if (dev_caches[i].dev == dev) return &dev_caches[i];
+	return NULL;
+}
+
+static struct dev_cache *cache_claim(VkDevice dev) {
+	struct dev_cache *c = cache_lookup(dev);
+	if (c) return c;
+	for (int i = 0; i < DEV_CACHE_MAX; i++) {
+		if (!dev_caches[i].dev) {
+			memset(&dev_caches[i], 0, sizeof dev_caches[i]);
+			dev_caches[i].dev = dev;
+			return &dev_caches[i];
+		}
+	}
+	// Full: this device runs with no shim cache rather than evicting someone
+	// else's. Costs recompiles, corrupts nothing.
+	if (!warned_dev_cache_full) {
+		warned_dev_cache_full = 1;
+		LOGE("more than %d live devices — the newest runs with no pipeline cache",
+			DEV_CACHE_MAX);
+	}
+	return NULL;
+}
 
 // App-supplied caches with a batch currently compiling into them.
 //
@@ -367,14 +413,14 @@ static int cache_path_for_self(char *out, size_t len) {
 //
 // Takes effect on the next launch of anything already running, which is what
 // the root-side delete did too: an app holds its cache open until it exits.
-static void drop_cache_if_stale(void) {
+static void drop_cache_if_stale(const char *path) {
 	char gen[PROP_VALUE_MAX] = {0};
 	__system_property_get(CACHE_GEN_PROP, gen);
 	if (!gen[0]) return;
 
-	char gen_path[sizeof(cache_path)];
-	size_t n = strlen(cache_path) - (sizeof(CACHE_FILE) - 1);
-	snprintf(gen_path, sizeof(gen_path), "%.*s" CACHE_GEN_FILE, (int)n, cache_path);
+	char gen_path[256];
+	size_t n = strlen(path) - (sizeof(CACHE_FILE) - 1);
+	snprintf(gen_path, sizeof(gen_path), "%.*s" CACHE_GEN_FILE, (int)n, path);
 
 	char stamp[PROP_VALUE_MAX] = {0};
 	int fd = open(gen_path, O_RDONLY);
@@ -385,7 +431,7 @@ static void drop_cache_if_stale(void) {
 	}
 	if (!strcmp(stamp, gen)) return;
 
-	if (unlink(cache_path) == 0)
+	if (unlink(path) == 0)
 		LOGI("shader cache cleared (generation %s)", gen);
 	fd = open(gen_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 	if (fd >= 0) {
@@ -456,23 +502,25 @@ static void resolve_cache_fns(VkDevice dev) {
 // one. That is exactly what killed RetroArch on a renderer restart —
 // vkMergePipelineCaches dereferenced the freed cache object.
 static VkPipelineCache ensure_disk_cache(VkDevice dev) {
-	if (cache_dev == dev && disk_cache != VK_NULL_HANDLE) return disk_cache;
+	struct dev_cache *c = cache_claim(dev);
+	if (!c) return VK_NULL_HANDLE;
+	if (c->pc != VK_NULL_HANDLE) return c->pc;
 	resolve_cache_fns(dev);
 	if (!real_cpc || !real_gpcd) return VK_NULL_HANDLE;
 
-	if (cache_path_for_self(cache_path, sizeof(cache_path)))
-		drop_cache_if_stale();
-	if (!cache_path[0]) {
+	if (cache_path_for_self(c->path, sizeof c->path))
+		drop_cache_if_stale(c->path);
+	if (!c->path[0]) {
 		// No sandbox to persist into: run the cache in memory only. Every
-		// path below that touches the file is guarded on cache_path[0].
-		cache_path[0] = '\0';
+		// path below that touches the file is guarded on c->path[0].
+		c->path[0] = '\0';
 		LOGI("no app sandbox for uid %u — pipeline cache stays in memory",
 		     (unsigned)getuid());
 	}
-	cache_frozen = 0;
+	c->frozen = 0;
 	void *initial = NULL;
 	size_t initial_size = 0;
-	int fd = cache_path[0] ? open(cache_path, O_RDONLY) : -1;
+	int fd = c->path[0] ? open(c->path, O_RDONLY) : -1;
 	if (fd >= 0) {
 		struct stat st;
 		if (fstat(fd, &st) == 0 && st.st_size > 0) {
@@ -498,12 +546,11 @@ static VkPipelineCache ensure_disk_cache(VkDevice dev) {
 	}
 	free(initial);
 	if (r != VK_SUCCESS) return VK_NULL_HANDLE;
-	cache_dev = dev;
-	disk_cache = pc;
-	last_saved_size = initial_size;
-	last_save_ns = now_ns();
-	LOGI("pipeline cache ready (%s, primed %zu bytes)",
-	     cache_path[0] ? cache_path : "memory only", initial_size);
+	c->pc = pc;
+	c->last_saved_size = initial_size;
+	c->last_save_ns = now_ns();
+	LOGI("pipeline cache ready for dev=%p (%s, primed %zu bytes)", (void *)dev,
+	     c->path[0] ? c->path : "memory only", initial_size);
 	return pc;
 }
 
@@ -518,35 +565,36 @@ static VkPipelineCache ensure_disk_cache(VkDevice dev) {
 // vkGetPipelineCacheData while input dispatch timed out. Losing the last few
 // seconds of compiles on a kill costs one recompile; blocking every compile
 // behind a 55 MB flush costs the session.
-static void save_disk_cache(VkDevice dev, int force) {
-	if (disk_cache == VK_NULL_HANDLE || !real_gpcd || !cache_path[0]) return;
+static void save_disk_cache(struct dev_cache *c, int force) {
+	if (!c || c->pc == VK_NULL_HANDLE || !real_gpcd || !c->path[0]) return;
+	VkDevice dev = c->dev;
 	unsigned long long now = now_ns();
-	if (!force && last_save_ns && now - last_save_ns < SAVE_MIN_INTERVAL_NS) return;
+	if (!force && c->last_save_ns && now - c->last_save_ns < SAVE_MIN_INTERVAL_NS) return;
 	size_t size = 0;
-	if (real_gpcd(dev, disk_cache, &size, NULL) != VK_SUCCESS || size == 0) return;
-	if (size == last_saved_size) return;
+	if (real_gpcd(dev, c->pc, &size, NULL) != VK_SUCCESS || size == 0) return;
+	if (size == c->last_saved_size) return;
 	// Size query first, cap second, serialise last — the check costs nothing
 	// and skips a multi-megabyte malloc and write when it fails.
 	size_t cap = cap_bytes("vkcachemax", CACHE_MAX_MB);
 	if (size > cap) {
-		if (!cache_frozen) {
-			cache_frozen = 1;
+		if (!c->frozen) {
+			c->frozen = 1;
 			LOGI("pipeline cache frozen at %zu bytes on disk: next write would be %zu, cap is %zu",
-				last_saved_size, size, cap);
+				c->last_saved_size, size, cap);
 		}
 		return;
 	}
-	last_save_ns = now;
+	c->last_save_ns = now;
 	void *data = malloc(size);
 	if (!data) return;
-	if (real_gpcd(dev, disk_cache, &size, data) == VK_SUCCESS) {
-		char tmp[sizeof(cache_path) + 4];
-		snprintf(tmp, sizeof(tmp), "%s.tmp", cache_path);
+	if (real_gpcd(dev, c->pc, &size, data) == VK_SUCCESS) {
+		char tmp[sizeof c->path + 4];
+		snprintf(tmp, sizeof(tmp), "%s.tmp", c->path);
 		int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		if (fd >= 0) {
 			if (write(fd, data, size) == (ssize_t)size && !close(fd)) {
-				if (rename(tmp, cache_path) == 0) {
-					last_saved_size = size;
+				if (rename(tmp, c->path) == 0) {
+					c->last_saved_size = size;
 					LOGI("pipeline cache saved (%zu bytes)", size);
 				}
 			} else {
@@ -558,7 +606,7 @@ static void save_disk_cache(VkDevice dev, int force) {
 	free(data);
 }
 
-static void drain_pending(VkDevice dev);
+static void drain_pending(struct dev_cache *c);
 
 static void publish_progress(void) {
 	char v[92];
@@ -608,15 +656,15 @@ static VkResult run_big_stack(void *(*fn)(void *), void *args, VkResult *slot) {
 
 // Called with cache_mu held and the master free. Folds in everything that was
 // compiled while the master was busy.
-static void drain_pending(VkDevice dev) {
-	if (!pending_count) return;
-	if (real_mpc && disk_cache != VK_NULL_HANDLE && cache_dev == dev)
-		real_mpc(dev, disk_cache, pending_count, pending_merge);
+static void drain_pending(struct dev_cache *c) {
+	if (!c || !c->pending_count) return;
+	if (real_mpc && c->pc != VK_NULL_HANDLE)
+		real_mpc(c->dev, c->pc, c->pending_count, c->pending);
 	if (real_dpc) {
-		for (unsigned i = 0; i < pending_count; i++)
-			real_dpc(dev, pending_merge[i], NULL);
+		for (unsigned i = 0; i < c->pending_count; i++)
+			real_dpc(c->dev, c->pending[i], NULL);
 	}
-	pending_count = 0;
+	c->pending_count = 0;
 }
 
 // Wraps one pipeline-creation batch: cache substitution/merge + persistence +
@@ -631,10 +679,12 @@ static VkResult compile_batch(void *(*fn)(void *), void *args, VkResult *slot,
 
 	pthread_mutex_lock(&cache_mu);
 	VkPipelineCache shim_cache = ensure_disk_cache(dev);
+	struct dev_cache *c = cache_lookup(dev);
 	if (app_cache != VK_NULL_HANDLE)
 		app_tracked = app_cache_ref(app_cache) == 0;
-	if (app_cache == VK_NULL_HANDLE && shim_cache != VK_NULL_HANDLE && !master_in_use) {
-		master_in_use = 1;
+	if (app_cache == VK_NULL_HANDLE && shim_cache != VK_NULL_HANDLE
+			&& c && !c->master_in_use) {
+		c->master_in_use = 1;
 		own_master = 1;
 		*cache_slot = shim_cache;
 	}
@@ -662,13 +712,16 @@ static VkResult compile_batch(void *(*fn)(void *), void *args, VkResult *slot,
 	if (dt > SLOW_NS) slow_session = 1;
 	if (slow_session) publish_progress();
 
+	// The device could have been destroyed under a long compile; re-look it up
+	// rather than trusting the pointer taken before the lock was dropped.
+	c = cache_lookup(dev);
 	if (own_master) {
 		// NOTE: app_cache is VK_NULL_HANDLE here by construction — own_master is
 		// only set on that path. An earlier version merged app_cache in right
 		// here, which was dead code and hid the gap handled below.
-		master_in_use = 0;
-		drain_pending(dev);
-		save_disk_cache(dev, 0);
+		if (c) c->master_in_use = 0;
+		drain_pending(c);
+		save_disk_cache(c, 0);
 	} else if (app_cache != VK_NULL_HANDLE) {
 		// The app brought its own cache, so the batch compiled into that and our
 		// persistent cache learned nothing. Measured live: SwanStation supplies a
@@ -683,23 +736,22 @@ static VkResult compile_batch(void *(*fn)(void *), void *args, VkResult *slot,
 		int last_user = app_tracked ? app_cache_unref(app_cache) : 0;
 		if (last_user
 				&& prop_explicit_on("debug.xdplus.vkcacheharvest", &cache_harvest)
-				&& real_mpc && !master_in_use
-				&& disk_cache != VK_NULL_HANDLE && cache_dev == dev) {
-			real_mpc(dev, disk_cache, 1, &app_cache);
-			drain_pending(dev);
-			save_disk_cache(dev, 0);
+				&& real_mpc && c && !c->master_in_use
+				&& c->pc != VK_NULL_HANDLE) {
+			real_mpc(dev, c->pc, 1, &app_cache);
+			drain_pending(c);
+			save_disk_cache(c, 0);
 		}
 	} else if (scratch != VK_NULL_HANDLE) {
-		if (!master_in_use && real_mpc && disk_cache != VK_NULL_HANDLE
-				&& cache_dev == dev) {
-			real_mpc(dev, disk_cache, 1, &scratch);
-			drain_pending(dev);
-			save_disk_cache(dev, 0);
-		} else if (pending_count < PENDING_MAX) {
-			pending_merge[pending_count++] = scratch;
+		if (c && !c->master_in_use && real_mpc && c->pc != VK_NULL_HANDLE) {
+			real_mpc(dev, c->pc, 1, &scratch);
+			drain_pending(c);
+			save_disk_cache(c, 0);
+		} else if (c && c->pending_count < PENDING_MAX) {
+			c->pending[c->pending_count++] = scratch;
 			scratch = VK_NULL_HANDLE;   // owned by the queue now
-		} else if (!warned_pending_full) {
-			warned_pending_full = 1;
+		} else if (c && !c->warned_pending_full) {
+			c->warned_pending_full = 1;
 			LOGI("pipeline cache merge queue full, dropping a scratch cache");
 		}
 	}
@@ -1110,12 +1162,18 @@ static int khr_name(const char *name, char *buf, size_t n) {
 	return 1;
 }
 
+// ⚠️ A miss returns VK_NULL_HANDLE and the caller drops the emulation. It used
+// to fall back to shim_dev, the most recently created device — which is fine
+// with one device and silently wrong with two, allocating this command
+// buffer's scratch images on somebody else's device. A miss means the shim
+// never saw vkBeginCommandBuffer for this buffer, so there is nothing to
+// guess from; failing closed costs one unemulated blit and corrupts nothing.
 static VkDevice cb_to_device(VkCommandBuffer cb) {
-	VkDevice dev = shim_dev;
+	VkDevice dev = VK_NULL_HANDLE;
 	pthread_mutex_lock(&scratch_mu);
 	for (int i = 0; i < CB_TABLE_MAX; i++) {
 		if (cb_table[i].cb == cb) {
-			if (cb_table[i].dev) dev = cb_table[i].dev;
+			dev = cb_table[i].dev;
 			break;
 		}
 	}
@@ -1590,32 +1648,28 @@ static VKAPI_ATTR void VKAPI_CALL shim_DestroyCommandPool(
 
 // Called with cache_mu held. `dev` is the device the cache belongs to, or NULL
 // when it is already dead and the handle must not be touched again.
-static void drop_disk_cache(VkDevice dev) {
+static void drop_disk_cache(struct dev_cache *c, int dev_alive) {
+	if (!c) return;
 	// Scratch caches waiting to be merged belong to this device too — fold in
 	// what we can and free the rest before the device goes.
-	if (dev) drain_pending(dev);
-	if (real_dpc && dev) {
-		for (unsigned i = 0; i < pending_count; i++)
-			real_dpc(dev, pending_merge[i], NULL);
+	if (dev_alive) {
+		drain_pending(c);
+		if (real_dpc) {
+			for (unsigned i = 0; i < c->pending_count; i++)
+				real_dpc(c->dev, c->pending[i], NULL);
+		}
+		if (c->pc != VK_NULL_HANDLE) {
+			save_disk_cache(c, 1);
+			if (real_dpc) real_dpc(c->dev, c->pc, NULL);
+		}
 	}
-	pending_count = 0;
-	master_in_use = 0;
-	if (disk_cache != VK_NULL_HANDLE && dev) {
-		save_disk_cache(dev, 1);
-		if (real_dpc) real_dpc(dev, disk_cache, NULL);
-	}
-	disk_cache = VK_NULL_HANDLE;
-	cache_dev = NULL;
-	last_saved_size = 0;
-	last_save_ns = 0;
-	cache_frozen = 0;
-	cache_path[0] = '\0';
+	memset(c, 0, sizeof *c);
 }
 
 static VKAPI_ATTR void VKAPI_CALL shim_DestroyDevice(
 	VkDevice dev, const VkAllocationCallbacks *ac) {
 	pthread_mutex_lock(&cache_mu);
-	if (cache_dev == dev) drop_disk_cache(dev);
+	drop_disk_cache(cache_lookup(dev), 1);
 	pthread_mutex_unlock(&cache_mu);
 	// Free every scratch image associated with this device. We do not store
 	// the device per command buffer; clear all slots because the process only
@@ -1685,13 +1739,17 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateDevice(
 	VkResult r = real_cd(pd, ci, ac, out);
 	free(kept);
 	if (r != VK_SUCCESS) return r;
-	// Belt and braces for a destroy we never saw: the old cache cannot be
-	// destroyed (its device may or may not still exist, and the handle may
-	// already be dangling), so drop the reference without touching it.
+	// A cache is per-device now, so a live one belonging to another device is
+	// no longer something to clear here. The one case still worth handling is
+	// a destroy we never saw: the blob hands back a recycled VkDevice address,
+	// which would otherwise inherit the dead device's cache. Its handles may
+	// already be dangling, so the slot is abandoned rather than freed.
 	pthread_mutex_lock(&cache_mu);
-	if (disk_cache != VK_NULL_HANDLE) {
-		LOGE("device created with a live cache from %p — dropping it unfreed", cache_dev);
-		drop_disk_cache(NULL);
+	struct dev_cache *stale = cache_lookup(*out);
+	if (stale) {
+		LOGE("recycled device handle %p still holds a cache — abandoning it unfreed",
+			(void *)*out);
+		drop_disk_cache(stale, 0);
 	}
 	pthread_mutex_unlock(&cache_mu);
 	physical_dev = pd;
