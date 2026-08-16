@@ -36,6 +36,11 @@
         android:title="@string/xdplus_hdmi_novsync_title"
         android:summary="@string/xdplus_hdmi_novsync_summary" />
 
+    <SwitchPreference
+        android:key="xdplus_hdmi_zero_anim"
+        android:title="@string/xdplus_hdmi_zero_anim_title"
+        android:summary="@string/xdplus_hdmi_zero_anim_summary" />
+
     <ListPreference
         android:key="xdplus_hdmi_res"
         android:title="@string/xdplus_hdmi_res_title"
