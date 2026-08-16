@@ -1,0 +1,20 @@
+// Diagnostic: holds one layer on layer stack 0 so the smallest layer that keeps the
+// mini-HDMI mirror alive can be measured. Not in PRODUCT_PACKAGES -- build with
+// `mka xdplus_pinlayer` and push it to /data/local/tmp.
+cc_binary {
+	name: "xdplus_pinlayer",
+	srcs: ["pinlayer.cpp"],
+	compile_multilib: "64",
+	shared_libs: [
+		"libbinder",
+		"libcutils",
+		"libgui",
+		"liblog",
+		"libui",
+		"libutils",
+	],
+	cflags: [
+		"-Wall",
+		"-Werror",
+	],
+}
