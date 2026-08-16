@@ -22,7 +22,10 @@
 # edify's getprop, which returns the running recovery's own properties.
 
 VENDOR_REV_PROP = "ro.vendor.xdplus.rev"
-VENDOR_REV_ACCEPTED = ("1",)
+# rev 2 adds hwcomposer.xdplus.so and the ro.hardware.hwcomposer line that selects it.
+# rev 1 is still accepted: nothing on the system side depends on the wrapper, so a build
+# installs and runs on the older partition -- it just does not get the mirror fix.
+VENDOR_REV_ACCEPTED = ("1", "2")
 
 VENDOR_DEVICE = "/dev/block/platform/mtk-msdc.0/11230000.MSDC0/by-name/vendor"
 VENDOR_MOUNT = "/vendor"
