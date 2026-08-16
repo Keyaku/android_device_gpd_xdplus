@@ -22,10 +22,13 @@
 # edify's getprop, which returns the running recovery's own properties.
 
 VENDOR_REV_PROP = "ro.vendor.xdplus.rev"
+# rev 3 patches the audio HAL's HDMI sink-format check, which is stubbed to always
+# refuse in the OEM blob and therefore kept AUX_DIGITAL from ever being opened.
 # rev 2 adds hwcomposer.xdplus.so and the ro.hardware.hwcomposer line that selects it.
-# rev 1 is still accepted: nothing on the system side depends on the wrapper, so a build
-# installs and runs on the older partition -- it just does not get the mirror fix.
-VENDOR_REV_ACCEPTED = ("1", "2")
+# Older revs are still accepted: both are vendor-side capabilities that nothing on the
+# system side depends on, so a build installs and runs on an older partition -- it just
+# does not get the mirror fix (rev 2) or HDMI audio (rev 3).
+VENDOR_REV_ACCEPTED = ("1", "2", "3")
 
 VENDOR_DEVICE = "/dev/block/platform/mtk-msdc.0/11230000.MSDC0/by-name/vendor"
 VENDOR_MOUNT = "/vendor"
