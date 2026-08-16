@@ -1,0 +1,124 @@
+From 63d28247679a577bd9796052a0531ed427de966e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 16 Aug 2026 10:51:25 +0100
+Subject: [PATCH] SurfaceFlinger: name the reason a layer is forced to client
+ composition
+
+Five separate predicates can force client composition and the logs never said
+which one fired, so a mirror-breaking launch could be blamed on a transform, an
+animation surface or a shadow with equal plausibility. Each site now names itself
+under debug.xdplus.cli_reason, off by default.
+
+The front-end line also walks the parent chain printing each ancestor's own corner
+radius, because `getRoundedCornerState()` inherits and the layer that logs the
+request is usually not the one that owns the radius.
+
+Changes:
+- `Layer.cpp`: report hdrY410/rounded/shadows plus the inherited-radius ancestor chain
+- `OutputLayer.cpp`: report the geometry predicate (secure vs non-secure output, ROT_INVALID transform) and the per-frame one (front-end flag, unsupported dataspace, caller-forced)
+
+Change-Id: I557763b6445d5856c89491838ae74e7f23f9cb6f
+---
+ .../CompositionEngine/src/OutputLayer.cpp     | 36 ++++++++++++++++---
+ services/surfaceflinger/Layer.cpp             | 15 ++++++++
+ 2 files changed, 47 insertions(+), 4 deletions(-)
+
+diff --git a/services/surfaceflinger/CompositionEngine/src/OutputLayer.cpp b/services/surfaceflinger/CompositionEngine/src/OutputLayer.cpp
+index ebf651ee8a..cfbcf1f03b 100644
+--- a/services/surfaceflinger/CompositionEngine/src/OutputLayer.cpp
++++ b/services/surfaceflinger/CompositionEngine/src/OutputLayer.cpp
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include <android-base/stringprintf.h>
++#include <cutils/properties.h>
+ #include <compositionengine/DisplayColorProfile.h>
+ #include <compositionengine/FodExtension.h>
+ #include <compositionengine/LayerFE.h>
+@@ -41,6 +42,19 @@ namespace impl {
+ 
+ namespace {
+ 
++// Cached rather than latched, so the log can be armed on a running SurfaceFlinger.
++bool clientCompositionReasonLog() {
++    static std::atomic<bool> enabled{false};
++    static std::atomic<nsecs_t> lastRead{0};
++    const nsecs_t now = systemTime();
++    if (now - lastRead.load(std::memory_order_relaxed) > ms2ns(500)) {
++        lastRead.store(now, std::memory_order_relaxed);
++        enabled.store(property_get_bool("debug.xdplus.cli_reason", false),
++                      std::memory_order_relaxed);
++    }
++    return enabled.load(std::memory_order_relaxed);
++}
++
+ FloatRect reduce(const FloatRect& win, const Region& exclude) {
+     if (CC_LIKELY(exclude.isEmpty())) {
+         return win;
+@@ -291,9 +305,16 @@ void OutputLayer::updateCompositionState(
+         state.bufferTransform = static_cast<Hwc2::Transform>(
+                 calculateOutputRelativeBufferTransform(internalDisplayRotationFlags));
+ 
+-        if ((layerFEState->isSecure && !outputState.isSecure) ||
+-            (state.bufferTransform & ui::Transform::ROT_INVALID)) {
++        const bool secureOnNonSecure = layerFEState->isSecure && !outputState.isSecure;
++        const bool rotInvalid = state.bufferTransform & ui::Transform::ROT_INVALID;
++        if (secureOnNonSecure || rotInvalid) {
+             state.forceClientComposition = true;
++            if (CC_UNLIKELY(clientCompositionReasonLog())) {
++                ALOGD("[XDPLUS-CLI] geom out=%s layer=%s secure=%d rotInvalid=%d xform=0x%x",
++                      getOutput().getName().c_str(), getLayerFE().getDebugName(),
++                      secureOnNonSecure, rotInvalid,
++                      static_cast<uint32_t>(state.bufferTransform));
++            }
+         }
+     }
+ 
+@@ -307,9 +328,16 @@ void OutputLayer::updateCompositionState(
+ 
+     // These are evaluated every frame as they can potentially change at any
+     // time.
+-    if (layerFEState->forceClientComposition || !profile.isDataspaceSupported(state.dataspace) ||
+-        forceClientComposition) {
++    const bool feForced = layerFEState->forceClientComposition;
++    const bool dataspaceUnsupported = !profile.isDataspaceSupported(state.dataspace);
++    if (feForced || dataspaceUnsupported || forceClientComposition) {
++        const bool wasForced = state.forceClientComposition;
+         state.forceClientComposition = true;
++        if (CC_UNLIKELY(!wasForced && clientCompositionReasonLog())) {
++            ALOGD("[XDPLUS-CLI] frame out=%s layer=%s fe=%d dataspace=%d caller=%d",
++                  getOutput().getName().c_str(), getLayerFE().getDebugName(), feForced,
++                  dataspaceUnsupported, forceClientComposition);
++        }
+     }
+ }
+ 
+diff --git a/services/surfaceflinger/Layer.cpp b/services/surfaceflinger/Layer.cpp
+index 3a3dd7b18c..64636b3394 100644
+--- a/services/surfaceflinger/Layer.cpp
++++ b/services/surfaceflinger/Layer.cpp
+@@ -562,6 +562,21 @@ void Layer::preparePerFrameCompositionState() {
+     // Force client composition for special cases known only to the front-end.
+     if ((isHdrY410() || usesRoundedCorners || drawShadows()) && !dropRoundedClient) {
+         compositionState->forceClientComposition = true;
++        if (CC_UNLIKELY(property_get_bool("debug.xdplus.cli_reason", false))) {
++            // Rounded corners are inherited, so name the ancestor that owns the radius.
++            std::string chain;
++            sp<Layer> ancestor = mDrawingParent.promote();
++            for (int depth = 0; depth < 8 && ancestor != nullptr; depth++) {
++                StringAppendF(&chain, "%s(r=%.2f) < ", ancestor->getDebugName(),
++                              ancestor->getDrawingState().cornerRadius);
++                ancestor = ancestor->mDrawingParent.promote();
++            }
++            ALOGD("[XDPLUS-CLI] fe layer=%s hdrY410=%d rounded=%d radius=%.2f own=%.2f "
++                  "shadows=%d chain=%s",
++                  getDebugName(), isHdrY410(), usesRoundedCorners,
++                  getRoundedCornerState().radius, getDrawingState().cornerRadius, drawShadows(),
++                  chain.c_str());
++        }
+     }
+ }
+ 
+-- 
+2.55.0
+
