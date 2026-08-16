@@ -1,0 +1,27 @@
+// HWC2 wrapper around the prebuilt composer blob, keeping the mini-HDMI mirror alive
+// while the primary display is client composing. Selected instead of the blob with
+// ro.hardware.hwcomposer=xdplus; the blob keeps its own name and is loaded by it.
+// See hwcshim.cpp for the mechanism.
+//
+// Deliberately NOT in PRODUCT_PACKAGES: /vendor is the frozen partition, and anything
+// soong stages under out/.../system/vendor is shadowed at runtime by the partition
+// mount. Build it with `mka hwcomposer.xdplus` and copy the result into
+// vendor/gpd/xdplus/proprietary/vendor/lib64/hw/, which is what the image is baked
+// from -- bumping ro.vendor.xdplus.rev with it.
+cc_library_shared {
+	name: "hwcomposer.xdplus",
+	srcs: ["hwcshim.cpp"],
+	relative_install_path: "hw",
+	proprietary: true,
+	compile_multilib: "64",
+	header_libs: ["libhardware_headers"],
+	shared_libs: [
+		"libcutils",
+		"liblog",
+	],
+	cflags: [
+		"-Wall",
+		"-Werror",
+		"-D__STDC_FORMAT_MACROS",
+	],
+}
