@@ -1,0 +1,85 @@
+From f66d808d32602d6b42f5db71eb9e53804b243aa0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 16 Aug 2026 10:50:35 +0100
+Subject: [PATCH] SurfaceFlinger: stop a launch animation's rounded corners
+ breaking the mirror
+
+The MTK composer decides mirroring by comparing the two displays' visible-layer
+lists, and it abandons the mirror as soon as the primary takes client composition:
+each display's present then clobbers the other's validate/present state word, the
+second one in skips the prepare block, gets no job, and neither display submits
+again. Both screens freeze until the composer is bounced.
+
+Measured on this device, the only thing that asks SurfaceFlinger for client
+composition during an app launch is `usesRoundedCorners`. The launcher's launch
+animation sets a corner radius on the task animation leash and animates it per
+frame, the layers under it inherit it through `getRoundedCornerState()`, and
+because `forceClientComposition` is output-independent the request lands on the
+external display as well as the primary. 124 forcings across a freezing launch,
+every one of them rounded corners; zero from transforms, shadows, HDR, dataspace
+or the developer option.
+
+Rounded corners are decoration, not geometry, so declining the request costs
+square window corners for the length of the animation and nothing else. A layer
+marked CLIENT because the overlay cannot apply its transform is deliberately left
+alone -- device-composing that one scans the buffer out without the transform and
+renders it visibly wrong.
+
+Gated on persist.sys.xdplus.mirror_no_rounded_cli, read through a 500 ms cache
+rather than a static so it can be A/B'd without restarting SurfaceFlinger.
+
+Changes:
+- `Layer.cpp`: add `xdplusSuppressRoundedCornerClient()` and skip the front-end client-composition request when rounded corners are its only cause
+
+Change-Id: Ie48fec0a313e1712e4d6b539f443abeef16fea44
+---
+ services/surfaceflinger/Layer.cpp | 25 ++++++++++++++++++++++++-
+ 1 file changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/services/surfaceflinger/Layer.cpp b/services/surfaceflinger/Layer.cpp
+index c05b52514d..3a3dd7b18c 100644
+--- a/services/surfaceflinger/Layer.cpp
++++ b/services/surfaceflinger/Layer.cpp
+@@ -518,6 +518,19 @@ void Layer::prepareGeometryCompositionState() {
+     }
+ }
+ 
++// Cached rather than latched, so the behaviour can be A/B'd on a running SurfaceFlinger.
++static bool xdplusSuppressRoundedCornerClient() {
++    static std::atomic<bool> enabled{false};
++    static std::atomic<nsecs_t> lastRead{0};
++    const nsecs_t now = systemTime();
++    if (now - lastRead.load(std::memory_order_relaxed) > ms2ns(500)) {
++        lastRead.store(now, std::memory_order_relaxed);
++        enabled.store(property_get_bool("persist.sys.xdplus.mirror_no_rounded_cli", false),
++                      std::memory_order_relaxed);
++    }
++    return enabled.load(std::memory_order_relaxed);
++}
++
+ void Layer::preparePerFrameCompositionState() {
+     const auto& drawingState{getDrawingState()};
+     auto* compositionState = editCompositionState();
+@@ -536,8 +549,18 @@ void Layer::preparePerFrameCompositionState() {
+     compositionState->isOpaque =
+             isOpaque(drawingState) && !usesRoundedCorners && getAlpha() == 1.0_hf;
+ 
++    // The MTK composer abandons a mirroring external display the moment the primary takes client
++    // composition, and on this device the only thing that ever asks for it during an app launch is
++    // the corner radius the launcher animates onto the task leash. Rounded corners are decoration,
++    // not geometry: dropping the request costs square corners for the length of the animation.
++    // Deliberately narrow -- HDR and shadow layers still client-compose, and a layer marked CLIENT
++    // because the overlay cannot apply its transform is untouched, since device-composing that one
++    // would scan the buffer out without the transform and render it wrong.
++    const bool roundedOnly = usesRoundedCorners && !isHdrY410() && !drawShadows();
++    const bool dropRoundedClient = roundedOnly && xdplusSuppressRoundedCornerClient();
++
+     // Force client composition for special cases known only to the front-end.
+-    if (isHdrY410() || usesRoundedCorners || drawShadows()) {
++    if ((isHdrY410() || usesRoundedCorners || drawShadows()) && !dropRoundedClient) {
+         compositionState->forceClientComposition = true;
+     }
+ }
+-- 
+2.55.0
+
