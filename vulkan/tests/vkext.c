@@ -179,8 +179,39 @@ static int probe_push_descriptors(VkPhysicalDevice pd, VkDevice dev) {
 	return 0;
 }
 
+// Does the shim ever hand back NULL for a core entry point an app resolves?
+// This is the discriminator for the PPSSPP live-resolution-change crash: that
+// SIGSEGV is a jump to address 0 from PPSSPP's OWN vkQueueSubmit_libretro
+// wrapper, so either PPSSPP nulled its own table (nothing outside it can help)
+// or it re-resolved and was handed a NULL (which would be ours). If nothing
+// below is NULL, the second explanation is dead.
+static const char *core_fns[] = {
+	"vkQueueSubmit", "vkQueueWaitIdle", "vkDeviceWaitIdle",
+	"vkCreateFence", "vkWaitForFences", "vkResetFences",
+	"vkAcquireNextImageKHR", "vkQueuePresentKHR",
+	"vkBeginCommandBuffer", "vkEndCommandBuffer", "vkCmdPipelineBarrier",
+	"vkCreateSwapchainKHR", "vkDestroySwapchainKHR", "vkGetSwapchainImagesKHR",
+	"vkCreateGraphicsPipelines", "vkCreateImage", "vkCmdBlitImage",
+};
+
+static int probe_procaddrs(VkInstance inst, VkDevice dev) {
+	printf("\n---- core entry points, both resolvers ----\n");
+	int nulls = 0;
+	for (unsigned i = 0; i < sizeof core_fns / sizeof core_fns[0]; i++) {
+		PFN_vkVoidFunction g = vkGetDeviceProcAddr(dev, core_fns[i]);
+		PFN_vkVoidFunction n = vkGetInstanceProcAddr(inst, core_fns[i]);
+		if (!g || !n) nulls++;
+		printf("  %-32s gdpa=%s gipa=%s\n", core_fns[i],
+			g ? "ok" : "NULL", n ? "ok" : "NULL");
+	}
+	printf(nulls ? "\n%d NULL(s) -- an app re-resolving these could store one\n"
+		: "\nno NULLs: nothing here can hand an app a null to call\n", nulls);
+	return 0;
+}
+
 int main(int argc, char **argv) {
 	int push_mode = (argc > 1 && !strcmp(argv[1], "push"));
+	int proc_mode = (argc > 1 && !strcmp(argv[1], "procaddr"));
 	VkApplicationInfo app = {
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 		.pApplicationName = "vkext",
@@ -232,6 +263,12 @@ int main(int argc, char **argv) {
 	CHECK(vkCreateDevice(pd, &dci, NULL, &dev), "vkCreateDevice(all extensions)");
 	printf("  PASS: device created\n");
 
+	if (proc_mode) {
+		int r = probe_procaddrs(inst, dev);
+		vkDestroyDevice(dev, NULL);
+		vkDestroyInstance(inst, NULL);
+		return r;
+	}
 	if (push_mode) {
 		int r = probe_push_descriptors(pd, dev);
 		vkDestroyDevice(dev, NULL);
