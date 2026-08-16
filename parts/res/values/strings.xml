@@ -8,23 +8,14 @@
     <string name="gpd_xdplus_cat_display" translatable="false">Display out (experimental)</string>
 
     <string name="xdplus_hdmi_up_title" translatable="false">Bring up HDMI mirror</string>
-    <string name="xdplus_hdmi_up_summary" translatable="false">Starts mirroring to the mini-HDMI port. Requires \"HDMI mirror mode\" turned on and a reboot since turning it on, with the screen unlocked. Takes about 30 seconds. If nothing appears, use \"Tear down HDMI\" and try again.</string>
+    <string name="xdplus_hdmi_up_summary" translatable="false">Starts mirroring to the mini-HDMI port, with the screen unlocked. Takes about 30 seconds. If nothing appears, use \"Tear down HDMI\" and try again.</string>
     <string name="xdplus_hdmi_up_toast" translatable="false">Bringing up HDMI mirror… (~30s)</string>
     <string name="xdplus_hdmi_down_title" translatable="false">Tear down HDMI</string>
     <string name="xdplus_hdmi_down_summary" translatable="false">Stop HDMI output and go back to the built-in screen only. Also the way out if a bring-up leaves the picture wrong.</string>
     <string name="xdplus_hdmi_down_toast" translatable="false">Tearing down HDMI…</string>
 
-
-    <string name="xdplus_hdmi_mirror_mode_title" translatable="false">HDMI mirror mode</string>
-    <string name="xdplus_hdmi_mirror_mode_summary" translatable="false">Required for mirroring, and must be on before the HDMI cable is plugged in. Takes effect after a reboot — turning it on now does nothing until you restart. (Disables the external-display forced validate, which conflicts with mirroring.)</string>
-
-    <string name="xdplus_hdmi_novsync_title" translatable="false">Loosen mirror frame pacing</string>
-    <string name="xdplus_hdmi_novsync_summary" translatable="false">Try this if the mirrored picture stutters. Applied at the next HDMI bring-up, not straight away. (Stops the composer pacing external frames on vsync.)</string>
     <string name="xdplus_hdmi_pin_layer_title" translatable="false">Keep the monitor alive in fullscreen apps</string>
     <string name="xdplus_hdmi_pin_layer_summary" translatable="false">Holds one nearly invisible pixel on screen while a monitor is connected. Without it, games and other fullscreen apps freeze the monitor until you leave them. Applied straight away.</string>
-
-    <string name="xdplus_hdmi_zero_anim_title" translatable="false">Turn off animations while mirroring</string>
-    <string name="xdplus_hdmi_zero_anim_summary" translatable="false">Stops an app that rotates the screen freezing both screens while HDMI is connected. Your animation speeds are restored when the cable is unplugged. Applied at the next HDMI bring-up, not straight away.</string>
 
     <string name="xdplus_hdmi_res_title" translatable="false">HDMI resolution</string>
 
@@ -35,7 +26,6 @@
          feature. -->
     <string name="xdplus_hdmi_experimental_title" translatable="false">Experimental feature</string>
     <string name="xdplus_hdmi_experimental_summary" translatable="false">Mirroring to an external screen works, but it is not finished: bring-up can fail, and the built-in screen may show a doubled or discoloured picture until you tear it down. Nothing here damages the device — worst case, reboot.</string>
-
 
     <string name="xdplus_hide_error_dialogs_title" translatable="false">Hide app crash dialogs</string>
     <string name="xdplus_hide_error_dialogs_summary" translatable="false">Suppress \"app has stopped\" popups (useful for kiosk / handheld use).</string>

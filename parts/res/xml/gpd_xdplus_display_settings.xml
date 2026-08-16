@@ -27,24 +27,9 @@
         android:summary="@string/xdplus_hdmi_down_summary" />
 
     <SwitchPreference
-        android:key="xdplus_hdmi_mirror_mode"
-        android:title="@string/xdplus_hdmi_mirror_mode_title"
-        android:summary="@string/xdplus_hdmi_mirror_mode_summary" />
-
-    <SwitchPreference
-        android:key="xdplus_hdmi_novsync"
-        android:title="@string/xdplus_hdmi_novsync_title"
-        android:summary="@string/xdplus_hdmi_novsync_summary" />
-
-    <SwitchPreference
         android:key="xdplus_hdmi_pin_layer"
         android:title="@string/xdplus_hdmi_pin_layer_title"
         android:summary="@string/xdplus_hdmi_pin_layer_summary" />
-
-    <SwitchPreference
-        android:key="xdplus_hdmi_zero_anim"
-        android:title="@string/xdplus_hdmi_zero_anim_title"
-        android:summary="@string/xdplus_hdmi_zero_anim_summary" />
 
     <ListPreference
         android:key="xdplus_hdmi_res"
