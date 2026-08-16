@@ -24,6 +24,18 @@
 //     driver, 0.0.0.0 conformance and all-zero UUIDs. The shim advertises
 //     those extensions and answers them from 1.0 entry points — real DDK
 //     build tag, blob build-id as driverUUID. See the identity section below.
+//  4. The 1.1-promoted memory extensions the blob predates but which cost
+//     nothing to implement over its 1.0 entry points:
+//     VK_KHR_get_memory_requirements2, VK_KHR_bind_memory2,
+//     VK_KHR_dedicated_allocation and VK_KHR_maintenance3 — the set
+//     vk_mem_alloc-class allocators probe for. Core 1.0 itself was always
+//     fully supported; these close the gap apps actually test. See the
+//     memory-query section for what is deliberately NOT advertised.
+//
+// ⚠️ Anything the shim advertises must be stripped from vkCreateDevice's
+// ppEnabledExtensionNames — the blob fails the whole call on the first name it
+// does not know, so advertising without filtering costs an app its device.
+// shim_owns_ext + the filter in shim_CreateDevice are that contract.
 //
 // The shim cache is owned per VkDevice and torn down from the vkCreateDevice /
 // vkDestroyDevice hooks, and every pipeline-creation batch holds cache_mu for
@@ -128,7 +140,10 @@ static PFN_vkDestroyImage real_di;
 static PFN_vkAllocateMemory real_am;
 static PFN_vkFreeMemory real_fm;
 static PFN_vkGetImageMemoryRequirements real_gimr;
+static PFN_vkGetBufferMemoryRequirements real_gbmr;
+static PFN_vkGetImageSparseMemoryRequirements real_gismr;
 static PFN_vkBindImageMemory real_bim;
+static PFN_vkBindBufferMemory real_bbm;
 static PFN_vkCmdCopyImage real_cci;
 static PFN_vkCmdPipelineBarrier real_cpb;
 static PFN_vkBeginCommandBuffer real_bcb;
@@ -1626,10 +1641,49 @@ static VKAPI_ATTR void VKAPI_CALL shim_DestroyDevice(
 	real_dd(dev, ac);
 }
 
+// Defined with the extension tables below; the filter in shim_CreateDevice is
+// the one caller that needs it before that point.
+static int shim_owns_ext(const char *name);
+
 static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateDevice(
 	VkPhysicalDevice pd, const VkDeviceCreateInfo *ci,
 	const VkAllocationCallbacks *ac, VkDevice *out) {
+	// The blob's vkCreateDevice rejects the WHOLE call with
+	// VK_ERROR_EXTENSION_NOT_PRESENT on the first name it does not recognise,
+	// and every extension the shim advertises is by definition one of those.
+	// Without this filter an app that enables what
+	// vkEnumerateDeviceExtensionProperties just told it exists gets no Vulkan
+	// device at all — it never reaches a shim entry point to be helped by. So
+	// strip our own names out of ppEnabledExtensionNames before the blob sees
+	// the list, and answer their entry points from the proc-addr hooks.
+	VkDeviceCreateInfo filtered;
+	const char **kept = NULL;
+	if (ci->enabledExtensionCount) {
+		kept = malloc(ci->enabledExtensionCount * sizeof *kept);
+		if (kept) {
+			uint32_t n = 0;
+			for (uint32_t i = 0; i < ci->enabledExtensionCount; i++) {
+				const char *e = ci->ppEnabledExtensionNames[i];
+				if (shim_owns_ext(e)) {
+					LOGI("vkCreateDevice: keeping %s in the shim (blob has no such extension)", e);
+					continue;
+				}
+				kept[n++] = e;
+			}
+			if (n != ci->enabledExtensionCount) {
+				filtered = *ci;
+				filtered.enabledExtensionCount = n;
+				filtered.ppEnabledExtensionNames = n ? kept : NULL;
+				ci = &filtered;
+			}
+		} else {
+			// Out of memory for the copy: pass the app's list through
+			// unchanged rather than silently dropping extensions.
+			LOGE("vkCreateDevice: extension filter allocation failed, forwarding unfiltered");
+		}
+	}
 	VkResult r = real_cd(pd, ci, ac, out);
+	free(kept);
 	if (r != VK_SUCCESS) return r;
 	// Belt and braces for a destroy we never saw: the old cache cannot be
 	// destroyed (its device may or may not still exist, and the handle may
@@ -1729,6 +1783,93 @@ static const VkExtensionProperties shim_extra_exts[] = {
 };
 #define SHIM_EXTRA_EXTS ((uint32_t)(sizeof shim_extra_exts / sizeof shim_extra_exts[0]))
 
+// ---- memory-query and binding extensions ----------------------------------
+//
+// Vulkan 1.0 core is fully supported here — the blob is a real 1.0.49 driver.
+// What it lacks is the set of extensions later promoted into 1.1, which is
+// what modern allocators and engines actually probe for. Four of them are
+// pure transport over entry points the blob already has, so the shim can
+// implement them honestly rather than merely claiming them:
+//
+//  - VK_KHR_get_memory_requirements2: struct-wrapper over the 1.0
+//    vkGet{Image,Buffer}MemoryRequirements and vkGetImageSparseMemory-
+//    Requirements. No behaviour change whatsoever.
+//  - VK_KHR_bind_memory2: vkBind{Buffer,Image}Memory2 is a loop over the 1.0
+//    single binds. Nothing that may legally chain onto those infos exists on
+//    this device (device groups and swapchain binds both need extensions the
+//    shim does not advertise), so an unknown pNext cannot arrive.
+//  - VK_KHR_dedicated_allocation: reports prefers=false, requires=false, which
+//    is the truth for this driver, and lets VkMemoryDedicatedAllocateInfo ride
+//    in a pNext the blob ignores. Allocation stays valid either way. This is
+//    the pairing vk_mem_alloc looks for.
+//  - VK_KHR_maintenance3: two properties and one query, all derivable from 1.0
+//    limits and memory properties. See fill_maintenance3_properties.
+//
+// Deliberately NOT advertised, because a shim cannot fake them and claiming
+// one turns a working app into a broken one: every SPIR-V/compiler capability
+// (storage_buffer_storage_class, variable_pointers, 16bit_storage,
+// relaxed_block_layout, shader_float_controls, EXT_scalar_block_layout, the
+// subgroup extensions) — the USC compiler would reject the shaders — and
+// everything needing absent hardware or kernel plumbing (multiview,
+// sampler_ycbcr_conversion, every external_memory/semaphore/fence *object*
+// extension, the AHardwareBuffer import path, GOOGLE_display_timing,
+// incremental_present).
+//
+// debug.xdplus.vkmemext=0 disables the whole block.
+static int memext = -1;
+
+// Defined with the rest of the block below; the properties2 chain walker sits
+// between the two and is the one earlier caller.
+static void fill_maintenance3_properties(VkPhysicalDevice pd,
+	VkPhysicalDeviceMaintenance3PropertiesKHR *p);
+
+static const VkExtensionProperties shim_mem_exts[] = {
+	{ VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
+		VK_KHR_GET_MEMORY_REQUIREMENTS_2_SPEC_VERSION },
+	{ VK_KHR_BIND_MEMORY_2_EXTENSION_NAME,
+		VK_KHR_BIND_MEMORY_2_SPEC_VERSION },
+	{ VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
+		VK_KHR_DEDICATED_ALLOCATION_SPEC_VERSION },
+	{ VK_KHR_MAINTENANCE3_EXTENSION_NAME,
+		VK_KHR_MAINTENANCE3_SPEC_VERSION },
+};
+#define SHIM_MEM_EXTS ((uint32_t)(sizeof shim_mem_exts / sizeof shim_mem_exts[0]))
+
+// The two tables above are appended to whatever the blob enumerates, each
+// behind its own property gate. Everything that has to agree on "what does
+// the shim own" — the enumeration, and the vkCreateDevice filter — goes
+// through these two helpers, so adding a row to a table is the whole change.
+static uint32_t shim_added_ext_count(void) {
+	uint32_t n = 0;
+	if (prop_on("debug.xdplus.vkdrvinfo", &drvinfo)) n += SHIM_EXTRA_EXTS;
+	if (prop_on("debug.xdplus.vkmemext", &memext)) n += SHIM_MEM_EXTS;
+	return n;
+}
+
+static const VkExtensionProperties *shim_added_ext_at(uint32_t i) {
+	if (prop_on("debug.xdplus.vkdrvinfo", &drvinfo)) {
+		if (i < SHIM_EXTRA_EXTS) return &shim_extra_exts[i];
+		i -= SHIM_EXTRA_EXTS;
+	}
+	if (prop_on("debug.xdplus.vkmemext", &memext) && i < SHIM_MEM_EXTS)
+		return &shim_mem_exts[i];
+	return NULL;
+}
+
+// True for an extension the shim advertises and answers itself, i.e. one the
+// blob has never heard of. Gate-aware on purpose: with a gate off the name was
+// never advertised, so it must not be stripped either — an app enabling it
+// then gets the same VK_ERROR_EXTENSION_NOT_PRESENT a driver without the
+// extension would give, which is the honest answer.
+static int shim_owns_ext(const char *name) {
+	uint32_t n = shim_added_ext_count();
+	for (uint32_t i = 0; i < n; i++) {
+		const VkExtensionProperties *e = shim_added_ext_at(i);
+		if (e && !strcmp(e->extensionName, name)) return 1;
+	}
+	return 0;
+}
+
 static int identity_resolved;
 
 static void resolve_identity_fns(void) {
@@ -1753,12 +1894,13 @@ static void resolve_identity_fns(void) {
 static VKAPI_ATTR VkResult VKAPI_CALL shim_EnumerateDeviceExtensionProperties(
 	VkPhysicalDevice pd, const char *layer, uint32_t *count,
 	VkExtensionProperties *props) {
-	if (layer || !prop_on("debug.xdplus.vkdrvinfo", &drvinfo))
+	uint32_t added = shim_added_ext_count();
+	if (layer || !added)
 		return real_edep(pd, layer, count, props);
 	if (!props) {
 		VkResult r = real_edep(pd, NULL, count, NULL);
 		if (r != VK_SUCCESS) return r;
-		*count += SHIM_EXTRA_EXTS;
+		*count += added;
 		return VK_SUCCESS;
 	}
 	// Two-phase with capacity: save it before the real driver overwrites
@@ -1768,12 +1910,12 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_EnumerateDeviceExtensionProperties(
 	if (r != VK_SUCCESS && r != VK_INCOMPLETE) return r;
 	uint32_t filled = *count;
 	uint32_t appended = 0;
-	while (filled + appended < cap && appended < SHIM_EXTRA_EXTS) {
-		props[filled + appended] = shim_extra_exts[appended];
+	while (filled + appended < cap && appended < added) {
+		props[filled + appended] = *shim_added_ext_at(appended);
 		appended++;
 	}
 	*count = filled + appended;
-	return (r == VK_SUCCESS && appended == SHIM_EXTRA_EXTS)
+	return (r == VK_SUCCESS && appended == added)
 		? VK_SUCCESS : VK_INCOMPLETE;
 }
 
@@ -1829,6 +1971,11 @@ static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceProperties2KHR(
 			break;
 		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES_KHR:
 			fill_id_properties((VkPhysicalDeviceIDPropertiesKHR *)s);
+			break;
+		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES_KHR:
+			if (prop_on("debug.xdplus.vkmemext", &memext))
+				fill_maintenance3_properties(pd,
+					(VkPhysicalDeviceMaintenance3PropertiesKHR *)s);
 			break;
 		default:
 			break; // not ours to fill; a 1.0 driver ignores unknown sTypes too
@@ -1910,7 +2057,174 @@ static VKAPI_ATTR void VKAPI_CALL shim_GetPhysicalDeviceExternalFencePropertiesK
 	out->externalFenceFeatures = 0;
 }
 
+// ---- get_memory_requirements2 / bind_memory2 / dedicated / maintenance3 ----
+
+static void resolve_memext_fns(VkDevice dev) {
+	if (!real_gimr) real_gimr = (PFN_vkGetImageMemoryRequirements)
+		real_gdpa(dev, "vkGetImageMemoryRequirements");
+	if (!real_gbmr) real_gbmr = (PFN_vkGetBufferMemoryRequirements)
+		real_gdpa(dev, "vkGetBufferMemoryRequirements");
+	if (!real_gismr) real_gismr = (PFN_vkGetImageSparseMemoryRequirements)
+		real_gdpa(dev, "vkGetImageSparseMemoryRequirements");
+	if (!real_bim) real_bim = (PFN_vkBindImageMemory)
+		real_gdpa(dev, "vkBindImageMemory");
+	if (!real_bbm) real_bbm = (PFN_vkBindBufferMemory)
+		real_gdpa(dev, "vkBindBufferMemory");
+}
+
+// VK_KHR_dedicated_allocation's whole output. Both answers are false, and both
+// are true statements about this driver: it has no dedicated-allocation path,
+// so nothing is preferred and nothing is required. An app that then chains
+// VkMemoryDedicatedAllocateInfo onto vkAllocateMemory is chaining an sType the
+// blob ignores, and gets an ordinary — valid — allocation.
+static void fill_dedicated_requirements(void *pnext) {
+	for (VkBaseOutStructure *s = (VkBaseOutStructure *)pnext; s; s = s->pNext) {
+		if (s->sType == VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS_KHR) {
+			VkMemoryDedicatedRequirementsKHR *d =
+				(VkMemoryDedicatedRequirementsKHR *)s;
+			d->prefersDedicatedAllocation = VK_FALSE;
+			d->requiresDedicatedAllocation = VK_FALSE;
+		}
+	}
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetImageMemoryRequirements2KHR(
+	VkDevice dev, const VkImageMemoryRequirementsInfo2KHR *info,
+	VkMemoryRequirements2KHR *out) {
+	resolve_memext_fns(dev);
+	real_gimr(dev, info->image, &out->memoryRequirements);
+	fill_dedicated_requirements(out->pNext);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetBufferMemoryRequirements2KHR(
+	VkDevice dev, const VkBufferMemoryRequirementsInfo2KHR *info,
+	VkMemoryRequirements2KHR *out) {
+	resolve_memext_fns(dev);
+	real_gbmr(dev, info->buffer, &out->memoryRequirements);
+	fill_dedicated_requirements(out->pNext);
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetImageSparseMemoryRequirements2KHR(
+	VkDevice dev, const VkImageSparseMemoryRequirementsInfo2KHR *info,
+	uint32_t *count, VkSparseImageMemoryRequirements2KHR *out) {
+	resolve_memext_fns(dev);
+	if (!out) {
+		real_gismr(dev, info->image, count, NULL);
+		return;
+	}
+	uint32_t cap = *count;
+	VkSparseImageMemoryRequirements *tmp = malloc(cap * sizeof *tmp);
+	if (!tmp) { *count = 0; return; }
+	real_gismr(dev, info->image, &cap, tmp);
+	for (uint32_t i = 0; i < cap; i++)
+		out[i].memoryRequirements = tmp[i];
+	*count = cap;
+	free(tmp);
+}
+
+// VK_KHR_bind_memory2. The spec does not require these to be atomic, and they
+// cannot be: a 1.0 bind is permanent, so an error partway through leaves the
+// earlier binds in place. That matches what a driver implementing this
+// natively would do on a per-resource failure, and every caller treats a
+// failed bind as fatal anyway.
+static VKAPI_ATTR VkResult VKAPI_CALL shim_BindBufferMemory2KHR(
+	VkDevice dev, uint32_t count, const VkBindBufferMemoryInfoKHR *infos) {
+	resolve_memext_fns(dev);
+	for (uint32_t i = 0; i < count; i++) {
+		VkResult r = real_bbm(dev, infos[i].buffer, infos[i].memory,
+			infos[i].memoryOffset);
+		if (r != VK_SUCCESS) return r;
+	}
+	return VK_SUCCESS;
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_BindImageMemory2KHR(
+	VkDevice dev, uint32_t count, const VkBindImageMemoryInfoKHR *infos) {
+	resolve_memext_fns(dev);
+	for (uint32_t i = 0; i < count; i++) {
+		VkResult r = real_bim(dev, infos[i].image, infos[i].memory,
+			infos[i].memoryOffset);
+		if (r != VK_SUCCESS) return r;
+	}
+	return VK_SUCCESS;
+}
+
+// VK_KHR_maintenance3's two properties, both derived from 1.0 queries.
+//
+// maxPerSetDescriptors is defined as a number of descriptors in one set layout
+// that is *guaranteed* supported, so the minimum across the per-type
+// maxDescriptorSet* limits is the correct conservative answer: any layout
+// whose total descriptor count is within it is necessarily within every
+// individual per-type limit too. The two *Dynamic limits are deliberately left
+// out of the minimum — they are typically 8 on this class of hardware and
+// would collapse the figure to something no real layout could satisfy.
+//
+// maxMemoryAllocationSize has no 1.0 equivalent at all. The largest heap is
+// the honest ceiling: nothing bigger can be allocated regardless.
+static void fill_maintenance3_properties(VkPhysicalDevice pd,
+	VkPhysicalDeviceMaintenance3PropertiesKHR *p) {
+	VkPhysicalDeviceProperties props;
+	memset(&props, 0, sizeof props);
+	if (real_gpdp) real_gpdp(pd, &props);
+	const VkPhysicalDeviceLimits *l = &props.limits;
+	uint32_t m = l->maxDescriptorSetSamplers;
+	if (l->maxDescriptorSetUniformBuffers < m) m = l->maxDescriptorSetUniformBuffers;
+	if (l->maxDescriptorSetStorageBuffers < m) m = l->maxDescriptorSetStorageBuffers;
+	if (l->maxDescriptorSetSampledImages < m) m = l->maxDescriptorSetSampledImages;
+	if (l->maxDescriptorSetStorageImages < m) m = l->maxDescriptorSetStorageImages;
+	if (l->maxDescriptorSetInputAttachments < m) m = l->maxDescriptorSetInputAttachments;
+	p->maxPerSetDescriptors = m;
+
+	VkDeviceSize biggest = 0;
+	VkPhysicalDeviceMemoryProperties mp;
+	memset(&mp, 0, sizeof mp);
+	if (real_gpdmp) real_gpdmp(pd, &mp);
+	for (uint32_t i = 0; i < mp.memoryHeapCount; i++)
+		if (mp.memoryHeaps[i].size > biggest) biggest = mp.memoryHeaps[i].size;
+	p->maxMemoryAllocationSize = biggest;
+}
+
+static VKAPI_ATTR void VKAPI_CALL shim_GetDescriptorSetLayoutSupportKHR(
+	VkDevice dev, const VkDescriptorSetLayoutCreateInfo *ci,
+	VkDescriptorSetLayoutSupportKHR *out) {
+	(void)dev;
+	resolve_identity_fns();
+	VkPhysicalDeviceMaintenance3PropertiesKHR m3;
+	memset(&m3, 0, sizeof m3);
+	fill_maintenance3_properties(physical_dev, &m3);
+	uint64_t total = 0;
+	for (uint32_t i = 0; i < ci->bindingCount; i++)
+		total += ci->pBindings[i].descriptorCount;
+	out->supported = total <= m3.maxPerSetDescriptors ? VK_TRUE : VK_FALSE;
+}
+
 // ---- proc-addr interposition ----------------------------------------------
+
+// Shared by both proc-addr tables: the loader takes device entry points from
+// vkGetDeviceProcAddr, but apps and layers routinely ask vkGetInstanceProcAddr
+// for the same names, and the blob answers NULL for all of them either way.
+static PFN_vkVoidFunction shim_memext_proc(const char *name) {
+	if (!prop_on("debug.xdplus.vkmemext", &memext)) return NULL;
+	if (!strcmp(name, "vkGetImageMemoryRequirements2KHR") ||
+		!strcmp(name, "vkGetImageMemoryRequirements2"))
+		return (PFN_vkVoidFunction)shim_GetImageMemoryRequirements2KHR;
+	if (!strcmp(name, "vkGetBufferMemoryRequirements2KHR") ||
+		!strcmp(name, "vkGetBufferMemoryRequirements2"))
+		return (PFN_vkVoidFunction)shim_GetBufferMemoryRequirements2KHR;
+	if (!strcmp(name, "vkGetImageSparseMemoryRequirements2KHR") ||
+		!strcmp(name, "vkGetImageSparseMemoryRequirements2"))
+		return (PFN_vkVoidFunction)shim_GetImageSparseMemoryRequirements2KHR;
+	if (!strcmp(name, "vkBindBufferMemory2KHR") ||
+		!strcmp(name, "vkBindBufferMemory2"))
+		return (PFN_vkVoidFunction)shim_BindBufferMemory2KHR;
+	if (!strcmp(name, "vkBindImageMemory2KHR") ||
+		!strcmp(name, "vkBindImageMemory2"))
+		return (PFN_vkVoidFunction)shim_BindImageMemory2KHR;
+	if (!strcmp(name, "vkGetDescriptorSetLayoutSupportKHR") ||
+		!strcmp(name, "vkGetDescriptorSetLayoutSupport"))
+		return (PFN_vkVoidFunction)shim_GetDescriptorSetLayoutSupportKHR;
+	return NULL;
+}
 
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
 	VkDevice dev, const char *name) {
@@ -2014,6 +2328,15 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
 	}
 	if (!strcmp(name, "vkGetDeviceProcAddr"))
 		return (PFN_vkVoidFunction)shim_GetDeviceProcAddr;
+	// The 1.1-promoted memory-query and binding extensions the shim implements
+	// over 1.0. Both spellings are registered, as in the identity block: the
+	// blob exports neither, so nothing here can shadow a real driver entry
+	// point. Every one of them resolves its 1.0 backing lazily on first call,
+	// so returning the pointer without touching the device is safe.
+	{
+		PFN_vkVoidFunction g = shim_memext_proc(name);
+		if (g) return g;
+	}
 	PFN_vkVoidFunction f = real_gdpa(dev, name);
 	if (!f && prop_on("debug.xdplus.vkkhralias", &khr_alias)) {
 		char alias[128];
@@ -2088,6 +2411,10 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetInstanceProcAddr(
 		if (!strcmp(name, "vkGetPhysicalDeviceExternalFencePropertiesKHR") ||
 			!strcmp(name, "vkGetPhysicalDeviceExternalFenceProperties"))
 			return (PFN_vkVoidFunction)shim_GetPhysicalDeviceExternalFencePropertiesKHR;
+	}
+	{
+		PFN_vkVoidFunction g = shim_memext_proc(name);
+		if (g) return g;
 	}
 	PFN_vkVoidFunction f = real_gipa(inst, name);
 	if (!f && prop_on("debug.xdplus.vkkhralias", &khr_alias)) {
