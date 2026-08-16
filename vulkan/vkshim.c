@@ -59,6 +59,7 @@
 #include <pthread.h>
 #include <dlfcn.h>
 #include <string.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -638,19 +639,116 @@ static void *cp_thread(void *p) {
 	return NULL;
 }
 
-static VkResult run_big_stack(void *(*fn)(void *), void *args, VkResult *slot) {
+// The big stack is per-CALLER-THREAD and persistent.
+//
+// ⚠️ This used to pthread_create + pthread_join a fresh 64 MB-stack thread for
+// every vkCreate*Pipelines call. That is fine for the compile storm it was
+// written for (§134's USC recursion) and ruinous for what apps actually do:
+// SwanStation calls vkCreateGraphicsPipelines from its render loop, measured
+// at ~667 calls/second — about 28 per frame at 24 fps — so the shim was
+// mapping, faulting in, unmapping and tearing down a 64 MB stack 667 times a
+// second, for calls that are warm cache hits costing microseconds of real
+// work. GL pays none of this, which is why Vulkan was slower here regardless
+// of GPU load.
+//
+// One worker per calling thread keeps the stack guarantee with none of the
+// churn, and keeps concurrency: two app threads compiling at once still get
+// their own worker rather than serialising on a shared one.
+struct big_worker {
+	pthread_t thread;
+	pthread_mutex_t m;
+	pthread_cond_t work_cv, done_cv;
+	void *(*fn)(void *);
+	void *args;
+	int have_work, done, quit, started;
+};
+
+static pthread_key_t big_worker_key;
+static pthread_once_t big_worker_once = PTHREAD_ONCE_INIT;
+
+static void *big_worker_main(void *p) {
+	struct big_worker *w = p;
+	pthread_mutex_lock(&w->m);
+	for (;;) {
+		while (!w->have_work && !w->quit)
+			pthread_cond_wait(&w->work_cv, &w->m);
+		if (w->quit) break;
+		void *(*fn)(void *) = w->fn;
+		void *args = w->args;
+		w->have_work = 0;
+		pthread_mutex_unlock(&w->m);
+		fn(args);                       // runs on THIS thread's 64 MB stack
+		pthread_mutex_lock(&w->m);
+		w->done = 1;
+		pthread_cond_signal(&w->done_cv);
+	}
+	pthread_mutex_unlock(&w->m);
+	return NULL;
+}
+
+// Runs when a calling thread exits, so a worker never outlives its owner.
+static void big_worker_destroy(void *p) {
+	struct big_worker *w = p;
+	if (!w) return;
+	if (w->started) {
+		pthread_mutex_lock(&w->m);
+		w->quit = 1;
+		pthread_cond_signal(&w->work_cv);
+		pthread_mutex_unlock(&w->m);
+		pthread_join(w->thread, NULL);
+	}
+	pthread_cond_destroy(&w->work_cv);
+	pthread_cond_destroy(&w->done_cv);
+	pthread_mutex_destroy(&w->m);
+	free(w);
+}
+
+static void big_worker_key_init(void) {
+	pthread_key_create(&big_worker_key, big_worker_destroy);
+}
+
+static struct big_worker *big_worker_get(void) {
+	pthread_once(&big_worker_once, big_worker_key_init);
+	struct big_worker *w = pthread_getspecific(big_worker_key);
+	if (w) return w->started ? w : NULL;
+	w = calloc(1, sizeof *w);
+	if (!w) return NULL;
+	pthread_mutex_init(&w->m, NULL);
+	pthread_cond_init(&w->work_cv, NULL);
+	pthread_cond_init(&w->done_cv, NULL);
+	pthread_setspecific(big_worker_key, w);
+
 	pthread_attr_t attr;
-	pthread_t t;
 	pthread_attr_init(&attr);
 	pthread_attr_setstacksize(&attr, COMPILE_STACK_SIZE);
-	int err = pthread_create(&t, &attr, fn, args);
+	int err = pthread_create(&w->thread, &attr, big_worker_main, w);
 	pthread_attr_destroy(&attr);
 	if (err) {
-		LOGE("pthread_create failed (%d), calling on caller stack", err);
-		fn(args);
-	} else {
-		pthread_join(t, NULL);
+		LOGE("big-stack worker create failed (%d), calls run on the caller stack", err);
+		return NULL;
 	}
+	w->started = 1;
+	LOGI("big-stack worker started for this thread (%u MB)", COMPILE_STACK_SIZE >> 20);
+	return w;
+}
+
+static VkResult run_big_stack(void *(*fn)(void *), void *args, VkResult *slot) {
+	struct big_worker *w = big_worker_get();
+	if (!w) {
+		// No worker: the original fallback. Correct, just without the stack
+		// guarantee, which only matters for a genuine deep compile.
+		fn(args);
+		return *slot;
+	}
+	pthread_mutex_lock(&w->m);
+	w->fn = fn;
+	w->args = args;
+	w->have_work = 1;
+	w->done = 0;
+	pthread_cond_signal(&w->work_cv);
+	while (!w->done)
+		pthread_cond_wait(&w->done_cv, &w->m);
+	pthread_mutex_unlock(&w->m);
 	return *slot;
 }
 
@@ -787,6 +885,42 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 // cache_mu is never held across a compile (see cache_mu), so these add no
 // contention to the pipeline-compile path that ANR'd — only to the short
 // bookkeeping.
+// ⭐ Prime the app's OWN pipeline cache from the shim's persistent one.
+//
+// Without this the persistent cache is write-only for any app that supplies a
+// cache of its own, because the shim only substitutes its cache when the app
+// passes VK_NULL_HANDLE — every compile then goes against the app's cache and
+// never consults ours. SwanStation supplies one, so it recompiled its entire
+// shader set through the USC compiler on every single session, with the
+// harvest quietly filling a 64 MB file that nothing ever read. Measured with
+// one core pinned at 100% inside libusc while the GPU idled and the game ran
+// at 24 fps.
+//
+// Merging our cache into theirs at creation makes their cache start warm.
+// ⚠️ Skipped while a batch is compiling into ours: vkMergePipelineCaches reads
+// pSrcCaches, and that is exactly what must not race a write.
+static int cache_prime = -1;
+static int prop_on(const char *name, int *cache);   // defined with the other property helpers
+
+static VKAPI_ATTR VkResult VKAPI_CALL shim_CreatePipelineCache(
+	VkDevice dev, const VkPipelineCacheCreateInfo *ci,
+	const VkAllocationCallbacks *ac, VkPipelineCache *out) {
+	VkResult r = real_cpc(dev, ci, ac, out);
+	if (r != VK_SUCCESS || !prop_on("debug.xdplus.vkcacheprime", &cache_prime))
+		return r;
+	pthread_mutex_lock(&cache_mu);
+	VkPipelineCache mine = ensure_disk_cache(dev);
+	struct dev_cache *c = cache_lookup(dev);
+	if (mine != VK_NULL_HANDLE && mine != *out && real_mpc && c && !c->master_in_use) {
+		unsigned long long t0 = now_ns();
+		VkResult mr = real_mpc(dev, *out, 1, &mine);
+		LOGI("primed the app's pipeline cache from ours: result %d in %llu ms",
+			mr, (now_ns() - t0) / 1000000ull);
+	}
+	pthread_mutex_unlock(&cache_mu);
+	return r;
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL shim_MergePipelineCaches(
 	VkDevice dev, VkPipelineCache dst, uint32_t n, const VkPipelineCache *src) {
 	pthread_mutex_lock(&cache_mu);
@@ -2388,6 +2522,10 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL shim_GetDeviceProcAddr(
 	if (!strcmp(name, "vkMergePipelineCaches")) {
 		if (!real_mpc) real_mpc = (PFN_vkMergePipelineCaches)real_gdpa(dev, name);
 		return real_mpc ? (PFN_vkVoidFunction)shim_MergePipelineCaches : NULL;
+	}
+	if (!strcmp(name, "vkCreatePipelineCache")) {
+		if (!real_cpc) real_cpc = (PFN_vkCreatePipelineCache)real_gdpa(dev, name);
+		return real_cpc ? (PFN_vkVoidFunction)shim_CreatePipelineCache : NULL;
 	}
 	if (!strcmp(name, "vkGetPipelineCacheData")) {
 		if (!real_gpcd) real_gpcd = (PFN_vkGetPipelineCacheData)real_gdpa(dev, name);
