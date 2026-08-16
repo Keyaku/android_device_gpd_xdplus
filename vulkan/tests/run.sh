@@ -41,4 +41,4 @@ OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 "$CC" -O2 -Wall vkext.c -lvulkan -o "$OUT/vkext"
 adb push "$OUT/vkext" /data/local/tmp/ >/dev/null
-adb shell "chmod +x /data/local/tmp/vkext && /data/local/tmp/vkext"
+adb shell "chmod +x /data/local/tmp/vkext && /data/local/tmp/vkext $*"
