@@ -25,7 +25,162 @@
 	if (_r != VK_SUCCESS) { printf("FAIL %s: VkResult %d\n", what, _r); return 1; } \
 } while (0)
 
-int main(void) {
+// ---- maxPushDescriptors search --------------------------------------------
+//
+// VK_KHR_push_descriptor is genuinely supported by the blob, but its one limit
+// was only ever queryable through vkGetPhysicalDeviceProperties2, which the
+// 1.0.49 driver does not have -- so an app chaining
+// VkPhysicalDevicePushDescriptorPropertiesKHR sees maxPushDescriptors = 0.
+// The real value is not in any header on this tree, and both ways of guessing
+// are bad: too high can crash an app, too low denies it a working feature.
+//
+// It is measurable, though. A layout created with
+// VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR and more than
+// maxPushDescriptors descriptors must be rejected, so the largest accepted
+// count is the limit -- PROVIDED two things hold, and the probe checks both
+// before believing any number:
+//
+//  1. The driver actually validates. A 2017 driver with no validation layers
+//     may accept anything handed to it, in which case the search "finds" the
+//     top of its own range and means nothing. Probed by trying an absurd count
+//     first: if that is accepted, the answer is UNBOUNDED and worthless.
+//  2. The rejection is about push descriptors specifically. A plain layout
+//     with the same count is the control: if it is rejected too, what was
+//     found is the general per-set limit, not maxPushDescriptors.
+#define ABSURD_PUSH_COUNT 65536u
+
+// Some drivers only diagnose an over-large set at pipeline-layout time, when
+// the set has to be assigned real resource slots. Same object-creation cost,
+// no GPU work, so it is worth trying before giving up.
+static VkResult try_pipeline_layout(VkDevice dev, uint32_t count, int push) {
+	VkDescriptorSetLayoutBinding b = {
+		.binding = 0,
+		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		.descriptorCount = count,
+		.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+	};
+	VkDescriptorSetLayoutCreateInfo lci = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		.flags = push ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0,
+		.bindingCount = 1, .pBindings = &b,
+	};
+	VkDescriptorSetLayout set = VK_NULL_HANDLE;
+	VkResult r = vkCreateDescriptorSetLayout(dev, &lci, NULL, &set);
+	if (r != VK_SUCCESS) return r;
+	VkPipelineLayoutCreateInfo pci = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = 1, .pSetLayouts = &set,
+	};
+	VkPipelineLayout pl = VK_NULL_HANDLE;
+	r = vkCreatePipelineLayout(dev, &pci, NULL, &pl);
+	if (r == VK_SUCCESS) vkDestroyPipelineLayout(dev, pl, NULL);
+	vkDestroyDescriptorSetLayout(dev, set, NULL);
+	return r;
+}
+
+static uint32_t largest_pl_accepted(VkDevice dev, uint32_t hi, int push) {
+	if (try_pipeline_layout(dev, 1, push) != VK_SUCCESS) return 0;
+	uint32_t lo = 1;
+	while (lo < hi) {
+		uint32_t mid = lo + (hi - lo + 1) / 2;
+		if (try_pipeline_layout(dev, mid, push) == VK_SUCCESS) lo = mid;
+		else hi = mid - 1;
+	}
+	return lo;
+}
+
+static VkResult try_layout(VkDevice dev, uint32_t count, int push) {
+	VkDescriptorSetLayoutBinding b = {
+		.binding = 0,
+		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		.descriptorCount = count,
+		.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+	};
+	VkDescriptorSetLayoutCreateInfo ci = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		.flags = push ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0,
+		.bindingCount = 1, .pBindings = &b,
+	};
+	VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+	VkResult r = vkCreateDescriptorSetLayout(dev, &ci, NULL, &layout);
+	if (r == VK_SUCCESS) vkDestroyDescriptorSetLayout(dev, layout, NULL);
+	return r;
+}
+
+// Largest count accepted in [1, hi], or 0 if even 1 is refused.
+static uint32_t largest_accepted(VkDevice dev, uint32_t hi, int push) {
+	if (try_layout(dev, 1, push) != VK_SUCCESS) return 0;
+	uint32_t lo = 1;
+	while (lo < hi) {
+		uint32_t mid = lo + (hi - lo + 1) / 2;
+		if (try_layout(dev, mid, push) == VK_SUCCESS) lo = mid;
+		else hi = mid - 1;
+	}
+	return lo;
+}
+
+static int probe_push_descriptors(VkPhysicalDevice pd, VkDevice dev) {
+	printf("\n---- maxPushDescriptors search ----\n");
+
+	VkPhysicalDeviceProperties props;
+	vkGetPhysicalDeviceProperties(pd, &props);
+	printf("control limits: maxDescriptorSetUniformBuffers=%u "
+		"maxPerStageDescriptorUniformBuffers=%u\n",
+		props.limits.maxDescriptorSetUniformBuffers,
+		props.limits.maxPerStageDescriptorUniformBuffers);
+
+	// Gate 1: does this driver validate descriptor-set layout creation at all?
+	VkResult absurd = try_layout(dev, ABSURD_PUSH_COUNT, 1);
+	printf("absurd push layout (%u descriptors) -> VkResult %d\n",
+		ABSURD_PUSH_COUNT, absurd);
+	if (absurd == VK_SUCCESS) {
+		printf("  set-layout creation does not validate this.\n");
+		// Second chance: the pipeline layout, where the set has to be given
+		// real slots.
+		VkResult pl = try_pipeline_layout(dev, ABSURD_PUSH_COUNT, 1);
+		printf("absurd push PIPELINE layout -> VkResult %d\n", pl);
+		if (pl == VK_SUCCESS) {
+			printf("INCONCLUSIVE: neither set-layout nor pipeline-layout creation\n"
+				"  validates an absurd push-descriptor count, so this driver does\n"
+				"  not diagnose the limit at object-creation time at all. A search\n"
+				"  would only find the top of its own range. maxPushDescriptors\n"
+				"  cannot be measured this way and must stay unreported.\n");
+			return 0;
+		}
+		uint32_t p_push = largest_pl_accepted(dev, ABSURD_PUSH_COUNT - 1, 1);
+		uint32_t p_plain = largest_pl_accepted(dev, ABSURD_PUSH_COUNT - 1, 0);
+		printf("pipeline-layout boundary: push=%u plain=%u\n", p_push, p_plain);
+		if (p_push && p_push < p_plain)
+			printf("MEASURED (at pipeline-layout creation): maxPushDescriptors = %u\n",
+				p_push);
+		else
+			printf("INCONCLUSIVE: the pipeline-layout boundary is not specific to\n"
+				"  the push-descriptor flag, so it is the general per-set limit.\n");
+		return 0;
+	}
+
+	uint32_t push_max = largest_accepted(dev, ABSURD_PUSH_COUNT - 1, 1);
+	uint32_t plain_max = largest_accepted(dev, ABSURD_PUSH_COUNT - 1, 0);
+	printf("largest accepted: push=%u plain=%u\n", push_max, plain_max);
+
+	if (!push_max) {
+		printf("INCONCLUSIVE: even a single push descriptor is refused.\n");
+		return 0;
+	}
+	// Gate 2: is the boundary about push descriptors, or the general limit?
+	if (push_max >= plain_max) {
+		printf("INCONCLUSIVE: the push boundary is not below the plain one, so\n"
+			"  what was found is the general per-set limit, not maxPushDescriptors.\n");
+		return 0;
+	}
+	printf("MEASURED: maxPushDescriptors = %u\n", push_max);
+	printf("  (plain layouts accept %u at the same binding, so the boundary is\n"
+		"   specific to the push-descriptor flag)\n", plain_max);
+	return 0;
+}
+
+int main(int argc, char **argv) {
+	int push_mode = (argc > 1 && !strcmp(argv[1], "push"));
 	VkApplicationInfo app = {
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 		.pApplicationName = "vkext",
@@ -76,6 +231,13 @@ int main(void) {
 	printf("\nvkCreateDevice with all %u extensions enabled...\n", ec);
 	CHECK(vkCreateDevice(pd, &dci, NULL, &dev), "vkCreateDevice(all extensions)");
 	printf("  PASS: device created\n");
+
+	if (push_mode) {
+		int r = probe_push_descriptors(pd, dev);
+		vkDestroyDevice(dev, NULL);
+		vkDestroyInstance(inst, NULL);
+		return r;
+	}
 
 	// ---- VK_KHR_maintenance3 ------------------------------------------------
 	PFN_vkGetPhysicalDeviceProperties2KHR gpdp2 =
