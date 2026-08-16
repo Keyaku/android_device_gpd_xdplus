@@ -1008,6 +1008,28 @@ static void free_cb_scratch_images(VkDevice dev, struct cb_scratch *slot) {
 	slot->cap = 0;
 }
 
+// Two different things used to be one function, and conflating them is what
+// made the device mapping unreliable.
+//
+// recycle_cb: the command buffer is being re-recorded (begin, or an explicit
+// reset). Its scratch images are finished with, but the BUFFER STILL EXISTS
+// and still belongs to the same device — so the identity must survive.
+// ⚠️ Wiping it here is what forced cb_to_device to guess a device from a
+// global, and dropped every mip blit the moment that guess was removed.
+//
+// clear_cb: the command buffer is going away (freed, or its pool destroyed).
+// Identity goes with it.
+static void recycle_cb(VkDevice dev, VkCommandBuffer cb) {
+	pthread_mutex_lock(&scratch_mu);
+	for (int i = 0; i < CB_TABLE_MAX; i++) {
+		if (cb_table[i].cb == cb) {
+			free_cb_scratch_images(dev, &cb_table[i]);
+			break;
+		}
+	}
+	pthread_mutex_unlock(&scratch_mu);
+}
+
 static void clear_cb(VkDevice dev, VkCommandBuffer cb) {
 	pthread_mutex_lock(&scratch_mu);
 	for (int i = 0; i < CB_TABLE_MAX; i++) {
@@ -1018,6 +1040,17 @@ static void clear_cb(VkDevice dev, VkCommandBuffer cb) {
 			cb_table[i].pool = VK_NULL_HANDLE;
 			break;
 		}
+	}
+	pthread_mutex_unlock(&scratch_mu);
+}
+
+// vkResetCommandPool leaves every command buffer in the pool ALIVE, so this
+// releases scratch without forgetting which device they belong to.
+static void recycle_pool(VkDevice dev, VkCommandPool pool) {
+	pthread_mutex_lock(&scratch_mu);
+	for (int i = 0; i < CB_TABLE_MAX; i++) {
+		if (cb_table[i].pool == pool)
+			free_cb_scratch_images(dev, &cb_table[i]);
 	}
 	pthread_mutex_unlock(&scratch_mu);
 }
@@ -1048,14 +1081,33 @@ static void slot_claim_device(VkCommandBuffer cb, VkDevice dev) {
 	pthread_mutex_unlock(&scratch_mu);
 }
 
+// vkAllocateCommandBuffers is the only place the shim is told a command
+// buffer's device by the API itself, so this CREATES the slot rather than only
+// updating one that already exists.
+//
+// ⚠️ It used to update-only, which meant the device was never recorded here at
+// all — a freshly allocated buffer is by definition not in the table yet, so
+// the loop matched nothing. That was invisible for as long as cb_to_device
+// fell back to the last created device, and it turned into "mip blit: no
+// device for command buffer, dropping" on every blit the moment the fallback
+// was removed. Measured in RetroArch/SwanStation, not reasoned about.
 static void remember_pool(VkDevice dev, VkCommandBuffer cb, VkCommandPool pool) {
 	pthread_mutex_lock(&scratch_mu);
+	struct cb_scratch *slot = NULL;
 	for (int i = 0; i < CB_TABLE_MAX; i++) {
-		if (cb_table[i].cb == cb) {
-			cb_table[i].dev = dev;
-			cb_table[i].pool = pool;
-			break;
+		if (cb_table[i].cb == cb) { slot = &cb_table[i]; break; }
+		if (!slot && cb_table[i].cb == VK_NULL_HANDLE) slot = &cb_table[i];
+	}
+	if (slot) {
+		// A reused address must not inherit the previous buffer's scratch.
+		if (slot->cb != cb) {
+			slot->pairs = NULL;
+			slot->count = 0;
+			slot->cap = 0;
 		}
+		slot->cb = cb;
+		slot->dev = dev;
+		slot->pool = pool;
 	}
 	pthread_mutex_unlock(&scratch_mu);
 }
@@ -1170,14 +1222,24 @@ static int khr_name(const char *name, char *buf, size_t n) {
 // guess from; failing closed costs one unemulated blit and corrupts nothing.
 static VkDevice cb_to_device(VkCommandBuffer cb) {
 	VkDevice dev = VK_NULL_HANDLE;
+	int found = 0, used = 0;
 	pthread_mutex_lock(&scratch_mu);
 	for (int i = 0; i < CB_TABLE_MAX; i++) {
+		if (cb_table[i].cb != VK_NULL_HANDLE) used++;
 		if (cb_table[i].cb == cb) {
 			dev = cb_table[i].dev;
-			break;
+			found = 1;
 		}
 	}
 	pthread_mutex_unlock(&scratch_mu);
+	if (!dev) {
+		static int warned;
+		if (!warned) {
+			warned = 1;
+			LOGE("cb_to_device miss: cb=%p found=%d slots_used=%d/%d",
+				(void *)cb, found, used, CB_TABLE_MAX);
+		}
+	}
 	return dev;
 }
 
@@ -1606,13 +1668,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_BeginCommandBuffer(
 	VkCommandBuffer cb, const VkCommandBufferBeginInfo *bi) {
 	// Implicit reset: any scratch images owned by this command buffer are now
 	// safe to free because GPU execution has finished (or will not start).
-	clear_cb(VK_NULL_HANDLE, cb); // device not needed for metadata clear
+	recycle_cb(VK_NULL_HANDLE, cb); // frees scratch via the slot's own device
 	return real_bcb(cb, bi);
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL shim_ResetCommandBuffer(
 	VkCommandBuffer cb, VkCommandBufferResetFlags flags) {
-	clear_cb(VK_NULL_HANDLE, cb);
+	recycle_cb(VK_NULL_HANDLE, cb);
 	return real_rcb(cb, flags);
 }
 
@@ -1634,7 +1696,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_AllocateCommandBuffers(
 
 static VKAPI_ATTR VkResult VKAPI_CALL shim_ResetCommandPool(
 	VkDevice dev, VkCommandPool pool, VkCommandPoolResetFlags flags) {
-	clear_pool(dev, pool);
+	recycle_pool(dev, pool);
 	return real_rcpool(dev, pool, flags);
 }
 
