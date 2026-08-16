@@ -99,6 +99,19 @@ on property:sys.boot_completed=1
 # init only creates the dir; nothing recreates the templates wpa_supplicant is
 # launched with, so a factory reset otherwise leaves Wi-Fi permanently unable to
 # start supplicant. Copy-if-missing, root, once, at post-fs-data.
+# Holds one 1x1 layer while a second display is attached: the composer mirrors only
+# while both displays' visible-layer lists match, and an app whose list collapses to a
+# single layer drops the mirror. Self-gating on persist.sys.xdplus.mirror_pin, so the
+# Settings toggle needs no dispatch here.
+service xdplus-mirrorpin /system/bin/xdplus_pinlayer --service
+    class main
+    user system
+    group graphics system
+    disabled
+
+on property:sys.boot_completed=1
+    start xdplus-mirrorpin
+
 service xdplus-wifiseed /system/bin/xdplus_wifi_seed
     class main
     user root
