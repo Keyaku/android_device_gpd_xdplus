@@ -639,6 +639,8 @@ static void *cp_thread(void *p) {
 	return NULL;
 }
 
+static int prop_on(const char *name, int *cache);   // defined with the other property helpers
+
 // The big stack is per-CALLER-THREAD and persistent.
 //
 // ⚠️ This used to pthread_create + pthread_join a fresh 64 MB-stack thread for
@@ -732,14 +734,31 @@ static struct big_worker *big_worker_get(void) {
 	return w;
 }
 
-static VkResult run_big_stack(void *(*fn)(void *), void *args, VkResult *slot) {
-	struct big_worker *w = big_worker_get();
-	if (!w) {
-		// No worker: the original fallback. Correct, just without the stack
-		// guarantee, which only matters for a genuine deep compile.
-		fn(args);
+// debug.xdplus.vkbigworker=0 restores the per-call thread this shipped before,
+// for bisection. Not the caller's stack: that overflows on a deep USC compile.
+static int big_worker_enabled = -1;
+
+static VkResult run_own_thread(void *(*fn)(void *), void *args, VkResult *slot) {
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, COMPILE_STACK_SIZE);
+	pthread_t t;
+	int err = pthread_create(&t, &attr, fn, args);
+	pthread_attr_destroy(&attr);
+	if (err) {
+		fn(args);                       // last resort, caller's stack
 		return *slot;
 	}
+	pthread_join(t, NULL);
+	return *slot;
+}
+
+static VkResult run_big_stack(void *(*fn)(void *), void *args, VkResult *slot) {
+	if (!prop_on("debug.xdplus.vkbigworker", &big_worker_enabled))
+		return run_own_thread(fn, args, slot);
+	struct big_worker *w = big_worker_get();
+	// Worker creation failed, now or earlier: keep the stack guarantee.
+	if (!w) return run_own_thread(fn, args, slot);
 	pthread_mutex_lock(&w->m);
 	w->fn = fn;
 	w->args = args;
@@ -900,7 +919,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL shim_CreateComputePipelines(
 // ⚠️ Skipped while a batch is compiling into ours: vkMergePipelineCaches reads
 // pSrcCaches, and that is exactly what must not race a write.
 static int cache_prime = -1;
-static int prop_on(const char *name, int *cache);   // defined with the other property helpers
 
 static VKAPI_ATTR VkResult VKAPI_CALL shim_CreatePipelineCache(
 	VkDevice dev, const VkPipelineCacheCreateInfo *ci,
