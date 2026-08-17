@@ -42,3 +42,21 @@ The functional test below was that remaining route; it ran on 2026-08-16 and clo
 ⚠️ **The floor is narrower than it looks**: it was established with storage buffers in a compute shader. `maxPushDescriptors` is one number across all descriptor types and stages, so combined image samplers in a fragment shader are untested and could behave differently.
 
 ⚠️ **The probe's own `debug.xdplus.*` gates are not reset by it.** With `debug.xdplus.vkmemext=0` the extension count drops and the maintenance3 check reports a failure — that is the gate working, not a regression. The shim caches each property on first use, so a changed gate needs a fresh process.
+
+## `vkrp` — the NULL-framebuffer render-pass guard, and its control
+
+`./run.sh rp` builds and runs it; `./run.sh rp control` runs the same binary with `debug.xdplus.vkrpguard=0` and restores the property afterwards.
+
+The guard drops a `vkCmdBeginRenderPass` whose framebuffer is `VK_NULL_HANDLE`, because the blob dereferences that handle without testing it. Dropping only the Begin was not enough — the caller still issued its draws and the blob faulted deeper — so suppression spans the whole pass, Begin to matching End, over a per-command-buffer table. That span, and the fact that it *ends*, is what this probe pins: a stale table entry would silently swallow the next pass recorded on the same buffer, which looks like a black frame rather than like a failure.
+
+Six checks, all against a real single-subpass pass over a 64×64 colour attachment: recording the null pass at all (surviving it *is* the result), submitting it, the queue going idle, a valid pass on another command buffer, a valid pass on the **same** buffer after suppression, and a null pass followed by a valid one inside one buffer — which is the ordering PPSSPP produces.
+
+**Run 2026-08-17 against the shipped shim (`202608162333`, `19acf68…`): 6/6 PASS, one `suppressing render pass with NULL framebuffer (hit 1, …)` line in logcat, as expected for two suppressions with first-then-every-512th logging.**
+
+⭐ **The control is what makes the pass mean something, and it reproduces the original crash exactly**: with the guard off, `#00 pc 000000000001f1e8 /system/vendor/lib64/hw/vulkan.mt8173.so`, `fault addr 0x80`, called from `shim_CmdBeginRenderPass+80`. That is the documented offset and the documented fault address, on demand and in a throwaway process. **So the guard is no longer a survival patch that has only ever been exercised by accident** — the fault it prevents is reproducible in ~2 seconds whenever it needs re-checking, e.g. after a blob swap.
+
+⚠️ **The control crashes on purpose.** Nothing is ever submitted on the null pass, so there is no GPU work, no device-lost and nothing to clean up beyond the process itself. ⚠️ **`run.sh` restores `debug.xdplus.vkrpguard=1` even when the run crashes** — leaving it at 0 would hand an unguarded shim to the next app that starts.
+
+⚠️ **The property is cached on first use**, so a control run needs a fresh process, which is why the two modes are separate invocations rather than one binary flipping the gate.
+
+⚠️ **Table overflow is not covered and cannot be.** Past `SUPP_MAX` simultaneously-suppressed command buffers the guard deliberately degrades to letting the command through, which on this driver means the crash — testing that would only re-demonstrate the control.

@@ -1868,10 +1868,6 @@ static void drop_disk_cache(struct dev_cache *c, int dev_alive) {
 	// what we can and free the rest before the device goes.
 	if (dev_alive) {
 		drain_pending(c);
-		if (real_dpc) {
-			for (unsigned i = 0; i < c->pending_count; i++)
-				real_dpc(c->dev, c->pending[i], NULL);
-		}
 		if (c->pc != VK_NULL_HANDLE) {
 			save_disk_cache(c, 1);
 			if (real_dpc) real_dpc(c->dev, c->pc, NULL);
@@ -1880,11 +1876,22 @@ static void drop_disk_cache(struct dev_cache *c, int dev_alive) {
 	memset(c, 0, sizeof *c);
 }
 
+// Leaving an app mid-compile-storm runs this on whichever thread tears the
+// renderer down, and the forced save inside it is a full serialise + malloc +
+// write of a cache that reaches tens of MB — the same operation that ANR'd
+// RetroArch when it ran per batch (see save_disk_cache). Whether it is long
+// enough to matter on the exit path has never been measured, so both halves are
+// timed and reported. Log-only: nothing here changes what the shim does.
+#define DESTROY_SLOW_MS 200ull
+
 static VKAPI_ATTR void VKAPI_CALL shim_DestroyDevice(
 	VkDevice dev, const VkAllocationCallbacks *ac) {
+	unsigned long long t0 = now_ns();
 	pthread_mutex_lock(&cache_mu);
+	unsigned long long t_lock = now_ns();
 	drop_disk_cache(cache_lookup(dev), 1);
 	pthread_mutex_unlock(&cache_mu);
+	unsigned long long t_cache = now_ns();
 	// Free every scratch image associated with this device. We do not store
 	// the device per command buffer; clear all slots because the process only
 	// ever has one active VkDevice on this hardware anyway.
@@ -1906,7 +1913,17 @@ static VKAPI_ATTR void VKAPI_CALL shim_DestroyDevice(
 	pthread_mutex_lock(&img_mu);
 	for (int i = 0; i < IMG_TABLE_MAX; i++) img_table[i].used = 0;
 	pthread_mutex_unlock(&img_mu);
+	unsigned long long t_free = now_ns();
 	real_dd(dev, ac);
+	unsigned long long t_end = now_ns();
+
+	unsigned long long total_ms = (t_end - t0) / 1000000ull;
+	if (total_ms >= DESTROY_SLOW_MS || compiled_count)
+		LOGI("vkDestroyDevice took %llu ms (cache_mu wait %llu, cache drop %llu, "
+		     "scratch free %llu, blob %llu; %u pipelines compiled this session)",
+		     total_ms, (t_lock - t0) / 1000000ull, (t_cache - t_lock) / 1000000ull,
+		     (t_free - t_cache) / 1000000ull, (t_end - t_free) / 1000000ull,
+		     compiled_count);
 }
 
 // Defined with the extension tables below; the filter in shim_CreateDevice is

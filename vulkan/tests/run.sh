@@ -39,6 +39,28 @@ fi
 cd "$(dirname "$0")"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
+
+# ./run.sh rp [control] -- the NULL-framebuffer render-pass guard, a separate
+# binary because its control half is a deliberate crash.
+if [ "$1" = "rp" ]; then
+	shift
+	"$CC" -O2 -Wall vkrp.c -lvulkan -o "$OUT/vkrp"
+	adb push "$OUT/vkrp" /data/local/tmp/ >/dev/null
+	if [ "$1" = "control" ]; then
+		# The shim caches each debug.xdplus.* property on first use, so the
+		# gate has to be down before the process starts. Restored either way,
+		# including on a crash -- leaving it at 0 would ship an unguarded
+		# RetroArch to the next person who runs a game.
+		adb shell setprop debug.xdplus.vkrpguard 0
+		adb shell "chmod +x /data/local/tmp/vkrp && /data/local/tmp/vkrp control" || true
+		adb shell setprop debug.xdplus.vkrpguard 1
+		echo "guard restored: debug.xdplus.vkrpguard=$(adb shell getprop debug.xdplus.vkrpguard)"
+		exit 0
+	fi
+	adb shell "chmod +x /data/local/tmp/vkrp && /data/local/tmp/vkrp $*"
+	exit $?
+fi
+
 "$CC" -O2 -Wall vkext.c -lvulkan -o "$OUT/vkext"
 adb push "$OUT/vkext" /data/local/tmp/ >/dev/null
 adb shell "chmod +x /data/local/tmp/vkext && /data/local/tmp/vkext $*"
