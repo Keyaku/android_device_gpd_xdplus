@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GPD XD+ → SELinux. The switches set persist props; init and xdplus_tweaks
+     do the privileged half. The denial list is filled in by the fragment. -->
+<PreferenceScreen
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:key="gpd_xdplus_selinux_settings"
+    android:title="@string/gpd_xdplus_cat_selinux">
+
+    <SwitchPreference
+        android:key="xdplus_selinux_enforce"
+        android:title="@string/xdplus_selinux_enforce_title" />
+
+    <SwitchPreference
+        android:key="xdplus_selinux_avclog"
+        android:title="@string/xdplus_selinux_avclog_title"
+        android:summary="@string/xdplus_selinux_avclog_summary" />
+
+    <Preference
+        android:key="xdplus_selinux_clear"
+        android:title="@string/xdplus_selinux_clear_title"
+        android:summary="@string/xdplus_selinux_clear_summary" />
+
+    <PreferenceCategory
+        android:key="xdplus_selinux_denials"
+        android:title="@string/xdplus_selinux_denials_title" />
+
+</PreferenceScreen>

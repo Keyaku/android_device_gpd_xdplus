@@ -69,7 +69,7 @@ PRODUCT_COPY_FILES += \
 # /system/bin as 0755 executables: init cannot transition a service into its own
 # SELinux domain unless it execs the script itself, and a 0644 file in
 # /system/etc leaves the exec target as the shell.
-PRODUCT_PACKAGES += xdplus_tweaks xdplus_wifi_seed
+PRODUCT_PACKAGES += xdplus_tweaks xdplus_wifi_seed xdplus_avcd
 
 # Holds one 1x1 layer while a second display is attached, so an app whose visible
 # list collapses to a single layer cannot drop the mirror (see pinlayer/).
