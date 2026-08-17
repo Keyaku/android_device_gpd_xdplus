@@ -30,7 +30,7 @@ public class XdPlusDisplaySettings extends XdPlusFragmentBase {
         addPreferencesFromResource(R.xml.gpd_xdplus_display_settings);
 
         bindSwitch(KEY_HDMI_PIN_LAYER, PROP_HDMI_PIN_LAYER, true);
-        bindList(KEY_HDMI_RES, PROP_HDMI_RES, "2");
+        bindList(KEY_HDMI_RES, PROP_HDMI_RES, "2", R.string.xdplus_hdmi_res_summary);
     }
 
     @Override
