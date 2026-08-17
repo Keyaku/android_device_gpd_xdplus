@@ -57,6 +57,25 @@ on property:sys.xdplus.action=hdmi_up
 on property:sys.xdplus.action=hdmi_down
     start xdplus-tweaks
 
+# SELinux denial recorder. Opt-in: it holds a dmesg reader open all boot.
+service xdplus-avcd /system/bin/xdplus_avcd
+    class late_start
+    user root
+    group root system log
+    disabled
+
+on property:persist.sys.xdplus.avclog=1
+    start xdplus-avcd
+
+on property:persist.sys.xdplus.avclog=0
+    stop xdplus-avcd
+
+on property:sys.xdplus.action=selinux
+    start xdplus-tweaks
+
+on property:sys.xdplus.action=avclog_clear
+    start xdplus-tweaks
+
 on property:sys.xdplus.action=vkcache_clear
     start xdplus-tweaks
 

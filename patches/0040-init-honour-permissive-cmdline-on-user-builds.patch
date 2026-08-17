@@ -1,0 +1,37 @@
+From 1d6d36fd46ce3431dda73c40b3377808fd594b22 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 23:40:18 +0100
+Subject: [PATCH] init: honour androidboot.selinux on user builds (patch 0040)
+
+Upstream gates the kernel command line behind ALLOW_PERMISSIVE_SELINUX, which
+is set only for debuggable builds, so a released user build enforces regardless
+of what the command line says. This port ships permissive deliberately: the
+policy is written but not finished, and the first user-variant build came up
+enforcing with Wi-Fi unable to load its driver.
+
+Change-Id: I5a4b9759757a1ef2ad25579f5a63154efbd0f5d4
+---
+ init/selinux.cpp | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/init/selinux.cpp b/init/selinux.cpp
+index 5a0255acd2..7c064e4688 100644
+--- a/init/selinux.cpp
++++ b/init/selinux.cpp
+@@ -104,10 +104,9 @@ EnforcingStatus StatusFromCmdline() {
+ }
+ 
+ bool IsEnforcing() {
+-    if (ALLOW_PERMISSIVE_SELINUX) {
+-        return StatusFromCmdline() == SELINUX_ENFORCING;
+-    }
+-    return true;
++    // GPD XD+: honour androidboot.selinux on `user` builds too, which upstream
++    // does only when debuggable. Dropping this makes released builds enforce.
++    return StatusFromCmdline() == SELINUX_ENFORCING;
+ }
+ 
+ // Forks, executes the provided program in the child, and waits for the completion in the parent.
+-- 
+2.55.0
+

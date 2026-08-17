@@ -1,0 +1,37 @@
+#!/system/bin/sh
+# xdplus_avcd — record SELinux denials where the GPD XD+ menu can read them.
+#
+# Follows the kernel ring buffer, which is the only complete source: logd's
+# auditd relay drops records under load and neither survives a reboot. The log
+# is world-readable because the menu that shows it runs as system, not root.
+
+LOGDIR=/data/misc/xdplus
+LOG="$LOGDIR/avc-denials.log"
+MAXBYTES=1048576
+
+mkdir -p "$LOGDIR" || exit 1
+chmod 0755 "$LOGDIR"
+: >> "$LOG" || exit 1
+chmod 0644 "$LOG"
+
+# One rotation only; a second generation is not worth the space here.
+rotate_if_large() {
+	set -- $(wc -c < "$LOG" 2>/dev/null)
+	[ -n "$1" ] && [ "$1" -gt "$MAXBYTES" ] || return 0
+	mv "$LOG" "$LOG.1" 2>/dev/null
+	: > "$LOG"
+	chmod 0644 "$LOG"
+}
+
+echo "--- xdplus_avcd started $(date '+%Y-%m-%d %H:%M:%S') enforce=$(getenforce)" >> "$LOG"
+
+# Wall-clock stamped on arrival: the kernel's own stamp is uptime-relative,
+# so it cannot be read across reboots.
+dmesg -w 2>/dev/null | while read -r line; do
+	case "$line" in
+		*"avc: "*"denied"*)
+			echo "$(date '+%m-%d %H:%M:%S') $line" >> "$LOG"
+			rotate_if_large
+			;;
+	esac
+done

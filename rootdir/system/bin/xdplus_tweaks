@@ -9,6 +9,8 @@
 #   boot         re-apply persisted toggles at boot_completed, prune the cache dir
 #   vkcache_prune  retired: caches live in each app's own sandbox now
 #   vkcache_clear  delete every shader cache (root-only work)
+#   selinux      apply persist.sys.xdplus.selinux_enforce (opt-in, default off)
+#   avclog_clear truncate the denial log the menu reads
 
 H=/d/hdmi
 # hdmictl now ships in the image (device/gpd/xdplus/hdmi); the /data copy is only
@@ -323,6 +325,23 @@ prune_retired_props() {
 	done
 }
 
+AVCLOG=/data/misc/xdplus/avc-denials.log
+
+# Opt-in enforcing, off unless asked for. The build ships permissive.
+selinux_apply() {
+	[ "$(getprop persist.sys.xdplus.selinux_enforce)" = "1" ] || return 0
+	if [ "$(getenforce)" = "Enforcing" ]; then
+		xlog "selinux: already enforcing"
+		return 0
+	fi
+	setenforce 1
+	xlog "selinux: setenforce 1 -> $(getenforce)"
+}
+
+avclog_clear() {
+	: > "$AVCLOG" 2>/dev/null && xlog "selinux: denial log cleared"
+}
+
 # Guard: the SurfaceFlinger-poking paths must never run before the framework is
 # fully up. init also gates the triggers on sys.boot_completed, but a manual/
 # early invocation must be a no-op too.
@@ -341,9 +360,11 @@ case "$CMD" in
 	# A reboot while the mirror was up leaves the saved scales stranded in a
 	# persist property, so the user would come back to a device with no
 	# animations and nothing on screen explaining why. Hand them back at boot.
-	boot)      anim_zero_restore; prune_retired_props; vkcache_prune ;;
+	boot)      anim_zero_restore; prune_retired_props; vkcache_prune; selinux_apply ;;
 	vkcache_prune) vkcache_prune ;;
 	vkcache_clear) vkcache_clear ;;
+	selinux)   selinux_apply ;;
+	avclog_clear) avclog_clear ;;
 	# Compile-progress relay: exits quietly, and must NOT clear sys.xdplus.action
 	# (it never set it).
 	vknotify)  vknotify; exit 0 ;;

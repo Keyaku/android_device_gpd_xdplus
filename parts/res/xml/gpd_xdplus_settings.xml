@@ -19,6 +19,12 @@
         android:summary="@string/gpd_xdplus_cat_shadercache_summary"
         android:fragment="org.lineageos.settings.xdplus.XdPlusShaderCacheSettings" />
 
+    <Preference
+        android:key="gpd_xdplus_cat_selinux"
+        android:title="@string/gpd_xdplus_cat_selinux"
+        android:summary="@string/gpd_xdplus_cat_selinux_summary"
+        android:fragment="org.lineageos.settings.xdplus.XdPlusSelinuxSettings" />
+
     <!-- A single handheld preference, not a category: it was the only thing
          left on the old "Experimental patches" page that anyone would set on
          purpose, and it is neither experimental nor a patch. -->
