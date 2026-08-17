@@ -1876,12 +1876,8 @@ static void drop_disk_cache(struct dev_cache *c, int dev_alive) {
 	memset(c, 0, sizeof *c);
 }
 
-// Leaving an app mid-compile-storm runs this on whichever thread tears the
-// renderer down, and the forced save inside it is a full serialise + malloc +
-// write of a cache that reaches tens of MB — the same operation that ANR'd
-// RetroArch when it ran per batch (see save_disk_cache). Whether it is long
-// enough to matter on the exit path has never been measured, so both halves are
-// timed and reported. Log-only: nothing here changes what the shim does.
+// Log-only. The forced save below is the per-batch operation that once ANR'd
+// RetroArch (see save_disk_cache); this measures what it costs on an exit.
 #define DESTROY_SLOW_MS 200ull
 
 static VKAPI_ATTR void VKAPI_CALL shim_DestroyDevice(
