@@ -5,27 +5,28 @@
 
     <string name="gpd_xdplus_title" translatable="false">GPD XD+</string>
     <string name="gpd_xdplus_summary" translatable="false">HDMI output, Vulkan shader cache, crash dialogs</string>
-    <string name="gpd_xdplus_cat_display" translatable="false">Display out (experimental)</string>
+    <string name="gpd_xdplus_cat_display" translatable="false">Display out</string>
 
     <string name="xdplus_hdmi_up_title" translatable="false">Bring up HDMI mirror</string>
-    <string name="xdplus_hdmi_up_summary" translatable="false">Starts mirroring to the mini-HDMI port, with the screen unlocked. Takes about 30 seconds. If nothing appears, use \"Tear down HDMI\" and try again.</string>
+    <string name="xdplus_hdmi_up_summary" translatable="false">Starts mirroring if plugging the cable in did not. Takes about 30 seconds, with the screen unlocked. If nothing appears, tear down and try once more.</string>
     <string name="xdplus_hdmi_up_toast" translatable="false">Bringing up HDMI mirror… (~30s)</string>
     <string name="xdplus_hdmi_down_title" translatable="false">Tear down HDMI</string>
-    <string name="xdplus_hdmi_down_summary" translatable="false">Stop HDMI output and go back to the built-in screen only. Also the way out if a bring-up leaves the picture wrong.</string>
+    <string name="xdplus_hdmi_down_summary" translatable="false">Stops HDMI output and returns to the built-in screen. Also the way out if either picture freezes, or if the built-in screen comes back wrong.</string>
     <string name="xdplus_hdmi_down_toast" translatable="false">Tearing down HDMI…</string>
 
     <string name="xdplus_hdmi_pin_layer_title" translatable="false">Keep the monitor alive in fullscreen apps</string>
-    <string name="xdplus_hdmi_pin_layer_summary" translatable="false">Holds one nearly invisible pixel on screen while a monitor is connected. Without it, games and other fullscreen apps freeze the monitor until you leave them. Applied straight away.</string>
+    <string name="xdplus_hdmi_pin_layer_summary" translatable="false">Holds one nearly invisible pixel on screen while a monitor is connected. Without it, games and other fullscreen apps freeze the monitor until you leave them. Takes effect within a few seconds. Leave it on unless you are testing.</string>
 
     <string name="xdplus_hdmi_res_title" translatable="false">HDMI resolution</string>
+    <!-- %1$s is the chosen mode. The script reads the property when the mirror
+         starts, so a change does not touch a running one. -->
+    <string name="xdplus_hdmi_res_summary" translatable="false">%1$s — applies the next time the mirror starts</string>
 
-    <!-- Non-selectable banner at the top of the Display out page. HDMI mirror
-         works and is user-verified, but bring-up depends on several conditions
-         holding together and the built-in panel can come back wrong until
-         teardown — so the page says so rather than looking like a finished
-         feature. -->
-    <string name="xdplus_hdmi_experimental_title" translatable="false">Experimental feature</string>
-    <string name="xdplus_hdmi_experimental_summary" translatable="false">Mirroring to an external screen works, but it is not finished: bring-up can fail, and the built-in screen may show a doubled or discoloured picture until you tear it down. Nothing here damages the device — worst case, reboot.</string>
+    <!-- Non-selectable notes block at the top of the Display out page. Mirroring
+         and its audio ship, so this states the rough edges that remain instead
+         of calling the whole feature experimental. -->
+    <string name="xdplus_hdmi_notes_title" translatable="false">Before you start</string>
+    <string name="xdplus_hdmi_notes_summary" translatable="false">Mirroring works and carries sound. Plugging a monitor in usually starts it on its own; if nothing appears, use \"Bring up HDMI mirror\", and reboot if that fails twice. Two rough edges remain: opening an app after the console has sat idle can freeze both pictures, and an app that forces a portrait screen can leave the built-in one wrong. \"Tear down HDMI\" is the way out of both. Games also run less smoothly while a monitor is connected.</string>
 
     <string name="xdplus_hide_error_dialogs_title" translatable="false">Hide app crash dialogs</string>
     <string name="xdplus_hide_error_dialogs_summary" translatable="false">Suppress \"app has stopped\" popups (useful for kiosk / handheld use).</string>
@@ -48,7 +49,7 @@
 
     <!-- Landing-page summaries: say what is behind each entry, since the page
          is now three doors rather than three headings. -->
-    <string name="gpd_xdplus_cat_display_summary" translatable="false">Experimental — mini-HDMI output: start and stop, mirroring, resolution</string>
+    <string name="gpd_xdplus_cat_display_summary" translatable="false">mini-HDMI output: start and stop, resolution, behaviour in fullscreen apps</string>
     <string name="gpd_xdplus_cat_shadercache_summary" translatable="false">Storage used by compiled game shaders, and how much to allow</string>
 
     <string name="gpd_xdplus_cat_shadercache" translatable="false">Vulkan shader cache</string>
@@ -60,7 +61,7 @@
     <!-- %1$s is the chosen limit. There is deliberately no "in use" figure:
          each cache lives inside its own app's sandbox now, which Settings
          cannot read. -->
-    <string name="xdplus_vkcache_summary" translatable="false">%1$s per app</string>
+    <string name="xdplus_vkcache_summary" translatable="false">%1$s — applies the next time a game starts</string>
 
     <!-- A shader cache trades storage for load time: shaders in it are not
          recompiled. It only ever grows (the driver blob gives no way to evict a
@@ -79,8 +80,8 @@
         <item>256</item>
     </string-array>
 
-    <!-- Sorted high -> low. 720p60 is the only latch-stable mode (HDMI out is
-         experimental), so it carries the Recommended tag. Values: 1=1080, 2=720, 0=480. -->
+    <!-- Sorted high -> low. 720p60 is the only latch-stable mode, so it carries
+         the Recommended tag. Values: 1=1080, 2=720, 0=480. -->
     <string-array name="xdplus_hdmi_res_entries" translatable="false">
         <item>1080p60</item>
         <item>720p60 (Recommended)</item>

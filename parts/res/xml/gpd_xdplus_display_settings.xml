@@ -6,13 +6,12 @@
     android:key="gpd_xdplus_display_settings"
     android:title="@string/gpd_xdplus_cat_display">
 
-    <!-- Banner, not a control: HDMI mirror works but is not finished, and the
-         page should say so before the first tappable entry rather than letting
-         it read as a shipped feature. -->
+    <!-- Notes block, not a control: the rough edges belong before the first
+         tappable entry, not after someone has hit one. -->
     <Preference
-        android:key="xdplus_hdmi_experimental"
-        android:title="@string/xdplus_hdmi_experimental_title"
-        android:summary="@string/xdplus_hdmi_experimental_summary"
+        android:key="xdplus_hdmi_notes"
+        android:title="@string/xdplus_hdmi_notes_title"
+        android:summary="@string/xdplus_hdmi_notes_summary"
         android:selectable="false"
         android:persistent="false" />
 

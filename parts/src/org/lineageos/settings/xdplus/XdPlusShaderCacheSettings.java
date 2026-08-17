@@ -23,7 +23,6 @@ import android.os.Bundle;
 import android.os.SystemProperties;
 import android.widget.Toast;
 
-import android.preference.ListPreference;
 import android.preference.Preference;
 import android.preference.PreferenceScreen;
 
@@ -47,7 +46,7 @@ public class XdPlusShaderCacheSettings extends XdPlusFragmentBase {
 
         bindList(KEY_VKNOTIFY, PROP_VKNOTIFY, "notification");
 
-        setUpCacheLimit(KEY_VKCACHE_MAX, PROP_VKCACHE_MAX, "64");
+        bindList(KEY_VKCACHE_MAX, PROP_VKCACHE_MAX, "64", R.string.xdplus_vkcache_summary);
     }
 
     @Override
@@ -57,24 +56,6 @@ public class XdPlusShaderCacheSettings extends XdPlusFragmentBase {
             return true;
         }
         return super.onPreferenceTreeClick(screen, preference);
-    }
-
-    // A list of MB values; the summary repeats the choice. It used to add "N in
-    // use now", which is no longer readable from here — the caches sit in app
-    // sandboxes.
-    private void setUpCacheLimit(String key, String prop, String def) {
-        final ListPreference pref = bindList(key, prop, def);
-        pref.setOnPreferenceChangeListener((p, v) -> {
-            SystemProperties.set(prop, (String) v);
-            pref.setValue((String) v);
-            updateCacheSummary(pref);
-            return true;
-        });
-        updateCacheSummary(pref);
-    }
-
-    private void updateCacheSummary(ListPreference pref) {
-        pref.setSummary(getString(R.string.xdplus_vkcache_summary, pref.getEntry()));
     }
 
     // Nothing here can delete another app's cache: SELinux allows only the app

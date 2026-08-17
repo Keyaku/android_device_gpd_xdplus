@@ -55,6 +55,20 @@ public abstract class XdPlusFragmentBase extends PreferenceFragment {
         return pref;
     }
 
+    /** As above, with a summary format whose one argument is the selected entry. */
+    protected ListPreference bindList(String key, String prop, String def, int summaryRes) {
+        final ListPreference pref = (ListPreference) findPreference(key);
+        pref.setValue(SystemProperties.get(prop, def));
+        pref.setSummary(getString(summaryRes, pref.getEntry()));
+        pref.setOnPreferenceChangeListener((p, v) -> {
+            SystemProperties.set(prop, (String) v);
+            pref.setValue((String) v);
+            pref.setSummary(getString(summaryRes, pref.getEntry()));
+            return true;
+        });
+        return pref;
+    }
+
     protected void dispatch(String action, int toastRes) {
         SystemProperties.set(PROP_ACTION, action);
         Toast.makeText(getContext(), toastRes, Toast.LENGTH_LONG).show();
