@@ -1,24 +1,14 @@
 // Headless probe for vkshim's NULL-framebuffer render-pass guard.
 //
-// The blob dereferences VkRenderPassBeginInfo::framebuffer without testing it
-// (IMG_vkCmdBeginRenderPass, fault addr 0x80 off a null base), so a null handle
-// there is a SIGSEGV rather than a validation error. shim_CmdBeginRenderPass
-// drops the call, and -- because dropping only the Begin made the blob fault
-// deeper in IMG_vkCmdDraw instead -- suppresses every command until the
-// matching vkCmdEndRenderPass.
+// The blob dereferences VkRenderPassBeginInfo::framebuffer without testing it,
+// so a null handle is a SIGSEGV. The guard drops the Begin and suppresses every
+// command to the matching End. What this pins is that span and its END: a stale
+// entry would swallow the next pass on the same buffer, which looks like a
+// black frame rather than a failure.
 //
-// The guard has fired plenty in the field, always from the same caller. What
-// had never been checked deliberately is the part that was learned from a
-// crash: that suppression spans the WHOLE pass, and that it ends where it
-// should rather than leaking onto the next pass recorded on the same command
-// buffer. That is what this probe pins.
-//
-//   ./run.sh rp            guard on (shipping default): must survive, must
-//                          still render the valid pass afterwards.
-//   ./run.sh rp control    guard off: must SIGSEGV at the first null Begin.
-//                          ⚠️ Deliberate crash of THIS process only -- nothing
-//                          is ever submitted on the null pass, so no GPU work
-//                          and no device-lost. run.sh restores the property.
+//   ./run.sh rp            guard on: must survive and still render.
+//   ./run.sh rp control    guard off: must SIGSEGV. ⚠️ Deliberate crash of this
+//                          process; nothing is submitted, so no GPU work.
 //
 // Build + run: ./run.sh rp  (needs an NDK; see the script)
 #include <vulkan/vulkan.h>
@@ -41,9 +31,7 @@ static void report(const char *what, int ok) {
 	if (!ok) fails++;
 }
 
-// A single-subpass pass over one colour attachment. CLEAR/STORE so a real
-// submission has something to do; the null-framebuffer case never reaches the
-// driver at all when the guard works.
+// Single-subpass pass over one colour attachment.
 static VkResult make_render_pass(VkDevice dev, VkFormat fmt, VkRenderPass *out) {
 	VkAttachmentDescription att = {
 		.format = fmt,
@@ -81,9 +69,8 @@ static int memory_type(VkPhysicalDevice pd, uint32_t bits, VkMemoryPropertyFlags
 	return -1;
 }
 
-// Records a pass whose framebuffer is fb, plus commands that must not reach the
-// driver when fb is VK_NULL_HANDLE. vkCmdClearAttachments needs an active pass
-// but no pipeline, which is why it stands in for real drawing here.
+// vkCmdClearAttachments stands in for drawing: it needs an active pass but no
+// pipeline, and the guard must suppress it when fb is VK_NULL_HANDLE.
 static void record_pass(VkCommandBuffer cb, VkRenderPass rp, VkFramebuffer fb) {
 	VkClearValue clear = { .color = { .float32 = { 0.f, 0.f, 0.f, 1.f } } };
 	VkRenderPassBeginInfo bi = {
@@ -210,8 +197,7 @@ int main(int argc, char **argv) {
 
 	printf("\n---- NULL-framebuffer render pass ----\n");
 
-	// 1. Recording the null pass at all. Without the guard the process dies
-	//    inside vkCmdBeginRenderPass, so reaching the next line IS the result.
+	// 1. Without the guard the process dies here, so reaching line 2 is the result.
 	CHECK(vkBeginCommandBuffer(cbs[0], &cbbi), "vkBeginCommandBuffer(null pass)");
 	record_pass(cbs[0], rp, VK_NULL_HANDLE);
 	CHECK(vkEndCommandBuffer(cbs[0]), "vkEndCommandBuffer(null pass)");
@@ -223,9 +209,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	// 2. Submitting it. The whole pass was dropped, so this is an empty command
-	//    buffer and must complete cleanly rather than hanging or losing the
-	//    device.
+	// 2. The pass was dropped, so this buffer is empty and must complete cleanly.
 	VkSubmitInfo si = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.commandBufferCount = 1, .pCommandBuffers = &cbs[0],
@@ -235,9 +219,7 @@ int main(int argc, char **argv) {
 	VkResult wr = vkQueueWaitIdle(queue);
 	report("queue goes idle after it (no device-lost)", wr == VK_SUCCESS);
 
-	// 3. The part that was learned from a crash: suppression must END at the
-	//    matching vkCmdEndRenderPass. A valid pass recorded on a DIFFERENT
-	//    buffer must execute normally.
+	// 3. Suppression must end at the matching End, learned from a crash.
 	CHECK(vkBeginCommandBuffer(cbs[1], &cbbi), "vkBeginCommandBuffer(valid pass)");
 	record_pass(cbs[1], rp, fb);
 	CHECK(vkEndCommandBuffer(cbs[1]), "vkEndCommandBuffer(valid pass)");
@@ -246,9 +228,7 @@ int main(int argc, char **argv) {
 	wr = sr == VK_SUCCESS ? vkQueueWaitIdle(queue) : sr;
 	report("a valid pass on another buffer still renders", wr == VK_SUCCESS);
 
-	// 4. Same handle, reused. The suppression table is keyed by command buffer,
-	//    so a stale entry would silently swallow this pass instead -- which
-	//    looks like a black frame, not like a failure.
+	// 4. Same handle reused: a stale table entry would swallow this pass.
 	CHECK(vkResetCommandBuffer(cbs[0], 0), "vkResetCommandBuffer");
 	CHECK(vkBeginCommandBuffer(cbs[0], &cbbi), "vkBeginCommandBuffer(reused)");
 	record_pass(cbs[0], rp, fb);
@@ -258,9 +238,7 @@ int main(int argc, char **argv) {
 	wr = sr == VK_SUCCESS ? vkQueueWaitIdle(queue) : sr;
 	report("the same buffer renders a valid pass after suppression", wr == VK_SUCCESS);
 
-	// 5. Interleaved on one buffer: null pass, then valid pass, in that order.
-	//    This is the ordering PPSSPP produces -- a suppressed pass every frame
-	//    with real ones around it.
+	// 5. Null then valid in one buffer -- the ordering PPSSPP produces.
 	CHECK(vkResetCommandBuffer(cbs[0], 0), "vkResetCommandBuffer(interleaved)");
 	CHECK(vkBeginCommandBuffer(cbs[0], &cbbi), "vkBeginCommandBuffer(interleaved)");
 	record_pass(cbs[0], rp, VK_NULL_HANDLE);

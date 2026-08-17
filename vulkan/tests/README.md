@@ -60,3 +60,17 @@ Six checks, all against a real single-subpass pass over a 64×64 colour attachme
 ⚠️ **The property is cached on first use**, so a control run needs a fresh process, which is why the two modes are separate invocations rather than one binary flipping the gate.
 
 ⚠️ **Table overflow is not covered and cannot be.** Past `SUPP_MAX` simultaneously-suppressed command buffers the guard deliberately degrades to letting the command through, which on this driver means the crash — testing that would only re-demonstrate the control.
+
+## `pushimg.sh` / `vkpushimg` — the fragment/combined-image-sampler half, run 2026-08-17
+
+`./pushimg.sh [N...]`, `MODE=nopush ./pushimg.sh` for the control. It pushes N combined image samplers into a fragment shader, renders one pixel that sums all N texels and checks the arithmetic — image i is 1×1 `R8_UNORM` holding i+1, so the answer is N(N+1)/2 exactly, into an `R32_SFLOAT` attachment because an 8-bit one could not carry the sum.
+
+This exists because the 32 the shim reports was measured with **storage buffers in a compute shader**, and `maxPushDescriptors` is one number across every descriptor type and stage. Textures in a fragment shader are the commonest real use of the extension and were untested.
+
+**Result: the floor holds, and no push-descriptor boundary is observable here either.** Correct sums at N = 1, 4, 8, 16, 24, **32 (5/5 repeats)**, 33, 40, 48, 49, 50, 52, 56, 60, 62, **63**. N = 64 fails at `vkCreateGraphicsPipelines` with `VK_ERROR_OUT_OF_HOST_MEMORY`, and the blob logs `PipelineCompileFragmentStage: Failed to compile UF to HW (UF_ERR_INTERNAL 0x8)` at `zeus/core/pipeline.c:4201`.
+
+⚠️ **The control fails identically at 64**, so that is the USC compiler again — the same wall the compute run met at 15 uniform buffers, in the fragment stage and at a different count. It is not a descriptor limit. ⭐ **What this does establish is a much wider demonstrated floor: 63 combined image samplers pushed to a fragment shader produce correct results.** 32 remains a conservative report, now on two independent descriptor types.
+
+⚠️⚠️ **`vkDestroyDevice` does not return on this driver once a real graphics pipeline has drawn.** It parks in `RGXDestroyGlobalPB` → `PVRSRVEventObjectWait` → a blocking `ioctl`, and was still there five minutes in. `vkDeviceWaitIdle` first does not help, an ordinary descriptor set does it exactly as a pushed one does, and a render pass carrying only clears (`vkrp.c`) never triggers it. **So the probe prints its result and `_exit`s by default**, letting the kernel reclaim the GPU context; `destroy` opts into the real teardown to reproduce the hang, and `noidle` drops the `vkDeviceWaitIdle` in front of it.
+
+⚠️ **Do not read that hang as a probe bug.** It is measured behaviour of the blob and it is the strongest lead the exit-path ANR candidate has.
