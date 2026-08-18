@@ -1,0 +1,29 @@
+# Denial recorder for the in-Settings "GPD XD+" menu, /system/bin/xdplus_avcd.
+#
+# It follows the kernel ring buffer and appends every avc line to a log on
+# /data, so denials survive both the 512 KB buffer wrapping and a reboot.
+#
+# ⚠️ It had no domain at all before: init started it with no exec label, so it
+# ran as u:r:init:s0 and was denied its own pipe under enforcing. A recorder
+# that cannot record while enforcing is the one thing it must not be.
+type xdplus_avcd, domain;
+type xdplus_avcd_exec, exec_type, system_file_type, file_type;
+
+init_daemon_domain(xdplus_avcd)
+
+# A shell script: the interpreter plus the applets it calls (dmesg, date,
+# getenforce, wc, mv, chmod).
+allow xdplus_avcd shell_exec:file rx_file_perms;
+allow xdplus_avcd system_file:file rx_file_perms;
+allow xdplus_avcd toolbox_exec:file rx_file_perms;
+
+# The ring buffer is the only complete source; logd's relay drops records
+# under load and neither survives a reboot.
+allow xdplus_avcd kernel:system syslog_read;
+allow xdplus_avcd kmsg_device:chr_file r_file_perms;
+
+# Its own directory under /data/misc. It cannot live in system_data_file:
+# domain.te neverallows a new domain from writing there.
+allow xdplus_avcd xdplus_data_file:dir { search write add_name remove_name };
+allow xdplus_avcd xdplus_data_file:file { create open read write append getattr setattr rename unlink };
+allow xdplus_avcd self:capability { chown fowner fsetid };

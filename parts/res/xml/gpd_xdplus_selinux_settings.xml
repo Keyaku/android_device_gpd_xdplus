@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- GPD XD+ → SELinux. The switches set persist props; init and xdplus_tweaks
-     do the privileged half. The denial list is filled in by the fragment. -->
+     do the privileged half. Export is a root-side action too. -->
 <PreferenceScreen
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:key="gpd_xdplus_selinux_settings"
@@ -16,12 +16,13 @@
         android:summary="@string/xdplus_selinux_avclog_summary" />
 
     <Preference
+        android:key="xdplus_selinux_export"
+        android:title="@string/xdplus_selinux_export_title"
+        android:summary="@string/xdplus_selinux_export_summary" />
+
+    <Preference
         android:key="xdplus_selinux_clear"
         android:title="@string/xdplus_selinux_clear_title"
         android:summary="@string/xdplus_selinux_clear_summary" />
-
-    <PreferenceCategory
-        android:key="xdplus_selinux_denials"
-        android:title="@string/xdplus_selinux_denials_title" />
 
 </PreferenceScreen>

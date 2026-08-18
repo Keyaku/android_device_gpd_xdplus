@@ -5,6 +5,11 @@
 # keeping it out of the blanket generic-debugfs ban.
 type xdplus_debugfs_hdmi, fs_type, debugfs_type;
 
+# The denial log xdplus_avcd writes and xdplus_tweaks exports. It needs a type
+# of its own: /data/misc defaults to system_data_file, which domain.te
+# neverallows any new domain from writing.
+type xdplus_data_file, file_type, data_file_type, core_data_file_type;
+
 # ⚠️ There is deliberately no type for a shared shader-cache directory, because
 # there is no shared directory any more.
 #

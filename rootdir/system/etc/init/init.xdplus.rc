@@ -41,7 +41,9 @@ on init
 service xdplus-tweaks /system/bin/xdplus_tweaks
     class main
     user root
-    group root system graphics input
+    # media_rw: /data/media is 0770 media_rw:media_rw, and root cannot traverse
+    # it without CAP_DAC_OVERRIDE, which domain.te neverallows for new domains.
+    group root system graphics input media_rw
     disabled
     oneshot
 
@@ -74,6 +76,9 @@ on property:sys.xdplus.action=selinux
     start xdplus-tweaks
 
 on property:sys.xdplus.action=avclog_clear
+    start xdplus-tweaks
+
+on property:sys.xdplus.action=avclog_export
     start xdplus-tweaks
 
 on property:sys.xdplus.action=vkcache_clear
@@ -140,6 +145,9 @@ service xdplus-wifiseed /system/bin/xdplus_wifi_seed
 
 on post-fs-data
     start xdplus-wifiseed
+    # init applies the file_contexts label on create; a mkdir from the recorder
+    # itself would inherit /data/misc's type and be denied under enforcing.
+    mkdir /data/misc/xdplus 0755 root system
 
 # Driver power-save causes the AP to low-ack-kick the device under sustained
 # transfer load — `iw dev wlan0 set power_save off`
