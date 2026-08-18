@@ -20,6 +20,10 @@
 #
 # The marker is read out of /vendor/build.prop with file_getprop, never with
 # edify's getprop, which returns the running recovery's own properties.
+#
+# This gate guards a bare bacon zip, which writes system and boot only. The
+# published package writes vendor itself, and inject_vendor.sh strips the gate
+# when it adds that write -- keeping it would abort the from-stock install.
 
 VENDOR_REV_PROP = "ro.vendor.xdplus.rev"
 # rev 3 patches the audio HAL's HDMI sink-format check, which is stubbed to always
@@ -51,7 +55,7 @@ ifelse(is_mounted("{mount}") == "",
     ifelse({accepted},
         ui_print("Vendor partition accepted."),
         ifelse({read_rev} == "",
-            abort("Your vendor partition predates this build and would leave the device half-updated. Flash the vendor zip published alongside this release first, then install this package."),
-            abort("This build does not support vendor revision " + {read_rev} + ". Flash the vendor zip published alongside this release."))));
+            abort("Your vendor partition predates this build and would leave the device half-updated. Install the published release package, which writes vendor itself."),
+            abort("This build does not support vendor revision " + {read_rev} + ". Install the published release package, which writes vendor itself."))));
 """.format(device=VENDOR_DEVICE, mount=VENDOR_MOUNT,
            accepted=accepted, read_rev=read_rev))
