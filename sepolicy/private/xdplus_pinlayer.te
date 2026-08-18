@@ -1,0 +1,28 @@
+# Mirror pin: holds one 1x1 SurfaceFlinger layer while a second display is
+# attached, because the composer mirrors only while both displays' visible-layer
+# lists match. Started from sys.boot_completed, runs as the system uid.
+#
+# ⚠️ It ran as u:r:init:s0 with no transition until 2026-08-18, so under
+# enforcing every binder call to SurfaceFlinger was denied and it retried every
+# two seconds -- mirroring silently broken, and the denial log drowned.
+type xdplus_pinlayer, domain;
+type xdplus_pinlayer_exec, exec_type, system_file_type, file_type;
+
+init_daemon_domain(xdplus_pinlayer)
+
+# The whole job: hold a layer open through the SurfaceFlinger client API.
+binder_use(xdplus_pinlayer)
+binder_call(xdplus_pinlayer, surfaceflinger)
+allow xdplus_pinlayer surfaceflinger_service:service_manager find;
+allow xdplus_pinlayer surfaceflinger:fd use;
+
+# SurfaceFlinger hands back the layer's buffer; the client maps it.
+allow xdplus_pinlayer surfaceflinger_tmpfs:file { read write map };
+allow xdplus_pinlayer gpu_device:chr_file rw_file_perms;
+allow xdplus_pinlayer graphics_device:chr_file rw_file_perms;
+
+# Buffer allocation goes through the graphics allocator HAL, as for any client.
+hal_client_domain(xdplus_pinlayer, hal_graphics_allocator)
+
+# It self-gates on persist.sys.xdplus.mirror_pin rather than being dispatched.
+get_prop(xdplus_pinlayer, xdplus_prop)
