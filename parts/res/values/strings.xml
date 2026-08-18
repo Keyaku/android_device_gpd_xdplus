@@ -29,7 +29,7 @@
     <string name="xdplus_hdmi_notes_summary" translatable="false">Mirroring works and carries sound. Plugging a monitor in usually starts it on its own; if nothing appears, use \"Bring up HDMI mirror\", and reboot if that fails twice. Two rough edges remain: opening an app after the console has sat idle can freeze both pictures, and an app that forces a portrait screen can leave the built-in one wrong. \"Tear down HDMI\" is the way out of both. Games also run less smoothly while a monitor is connected.</string>
 
     <string name="gpd_xdplus_cat_selinux" translatable="false">SELinux</string>
-    <string name="gpd_xdplus_cat_selinux_summary" translatable="false">Enforcing mode, and what it would block</string>
+    <string name="gpd_xdplus_cat_selinux_summary" translatable="false">Enforcing mode, and exporting what it blocked</string>
 
     <string name="xdplus_selinux_enforce_title" translatable="false">Enforce SELinux</string>
     <!-- %1$s is the mode the device is running in right now. -->
@@ -40,16 +40,15 @@
     <string name="xdplus_selinux_avclog_title" translatable="false">Record denials</string>
     <string name="xdplus_selinux_avclog_summary" translatable="false">Keep a log of everything the policy denies, so it is still there after a reboot. Costs a background reader while it runs.</string>
 
+    <string name="xdplus_selinux_export_title" translatable="false">Export denials to Download</string>
+    <string name="xdplus_selinux_export_summary" translatable="false">Write every denial — recorded and still in the kernel buffer — to Download/xdplus-selinux-denials.log. Overwrites the previous export.</string>
+    <string name="xdplus_selinux_export_toast" translatable="false">Exporting to Download/xdplus-selinux-denials.log</string>
+
     <string name="xdplus_selinux_clear_title" translatable="false">Clear recorded denials</string>
     <string name="xdplus_selinux_clear_summary" translatable="false">Empty the log, so the next thing you try starts from a clean list.</string>
     <string name="xdplus_selinux_clear_toast" translatable="false">Denial log cleared</string>
 
-    <string name="xdplus_selinux_denials_title" translatable="false">Denials seen</string>
     <!-- %1$s is "source → target", %2$d how many times it was recorded. -->
-    <string name="xdplus_selinux_denial_summary" translatable="false">%1$s · seen %2$d\u00d7</string>
-    <string name="xdplus_selinux_none" translatable="false">Nothing denied yet.</string>
-    <string name="xdplus_selinux_off" translatable="false">Not recording. Turn on "Record denials" above.</string>
-    <string name="xdplus_selinux_unreadable" translatable="false">The denial log could not be read.</string>
 
     <string name="xdplus_hide_error_dialogs_title" translatable="false">Hide app crash dialogs</string>
     <string name="xdplus_hide_error_dialogs_summary" translatable="false">Suppress \"app has stopped\" popups (useful for kiosk / handheld use).</string>

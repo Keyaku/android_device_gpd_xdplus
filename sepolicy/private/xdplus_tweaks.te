@@ -90,3 +90,15 @@ allow system_server xdplus_tweaks:fifo_file { read write getattr };
 # but appdomain and installd from unlinking app_data_file. The action bumps
 # persist.sys.xdplus.vkcachegen instead and each app's own shim drops its cache
 # on the next start -- which is set_prop(xdplus_prop), already granted above.
+
+# avclog_export: read what xdplus_avcd recorded, write one file into Download.
+# /data/media is the real path behind the sdcard view -- the FUSE mount itself
+# is app-facing and this domain stays off it.
+allow xdplus_tweaks xdplus_data_file:dir { search getattr };
+allow xdplus_tweaks xdplus_data_file:file r_file_perms;
+# /data itself is system_data_file: without search, the walk to /data/media is
+# denied before any of the rules below are reached. Search only -- domain.te
+# neverallows a new domain from writing there.
+allow xdplus_tweaks system_data_file:dir search;
+allow xdplus_tweaks media_rw_data_file:dir { search write add_name remove_name getattr };
+allow xdplus_tweaks media_rw_data_file:file { create open read write getattr setattr unlink };

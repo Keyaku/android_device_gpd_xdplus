@@ -11,6 +11,7 @@
 #   vkcache_clear  delete every shader cache (root-only work)
 #   selinux      apply persist.sys.xdplus.selinux_enforce (opt-in, default off)
 #   avclog_clear truncate the denial log the menu reads
+#   avclog_export write the denials to Download as a plain text file
 
 H=/d/hdmi
 # hdmictl now ships in the image (device/gpd/xdplus/hdmi); the /data copy is only
@@ -342,6 +343,43 @@ avclog_clear() {
 	: > "$AVCLOG" 2>/dev/null && xlog "selinux: denial log cleared"
 }
 
+# Fixed name, overwritten each time, so the menu can tell the user exactly where
+# it went. Written under /data/media rather than through the sdcard view: the
+# FUSE/sdcardfs path is an app-facing mount this domain has no business on.
+AVCEXPORT=/data/media/0/Download/xdplus-selinux-denials.log
+
+# The recorded log is the durable half; the live ring buffer holds whatever has
+# happened since the last write and is 512 KB, so it rotates within hours on a
+# busy device. Export both, recorded first.
+avclog_export() {
+	DIR="${AVCEXPORT%/*}"
+	mkdir -p "$DIR" 2>/dev/null
+	{
+		echo "# GPD XD+ SELinux denials — exported $(date '+%Y-%m-%d %H:%M:%S')"
+		# getenforce reads selinuxfs, denied to this domain under enforcing.
+		MODE="$(getenforce 2>/dev/null)"
+		[ -n "$MODE" ] || MODE="$([ "$(getprop persist.sys.xdplus.selinux_enforce)" = "1" ] && echo Enforcing || echo Permissive)"
+		echo "# mode=$MODE kernel=$(uname -r) build=$(getprop ro.system.build.version.incremental)"
+		# Netlink-only on 3.18, never in procfs, so the ring buffer is the
+		# only reader. No audit_lost line means none lost, not unknown.
+		echo "# $(dmesg | grep -o 'audit_lost=[0-9]*' | tail -1 || true)" \
+		     "audit_lost_reported=$(dmesg | grep -c 'audit_lost=')" \
+		     "backlog_exceeded=$(dmesg | grep -c 'backlog limit exceeded')"
+		echo
+		echo "## recorded ($AVCLOG)"
+		[ -f "$AVCLOG.1" ] && grep -F "avc: " "$AVCLOG.1" 2>/dev/null
+		[ -f "$AVCLOG" ] && grep -F "avc: " "$AVCLOG" 2>/dev/null
+		echo
+		echo "## live ring buffer"
+		dmesg 2>/dev/null | grep -F "avc: "
+	} > "$AVCEXPORT" 2>/dev/null || { xlog "selinux: export failed"; return 1; }
+	chmod 0644 "$AVCEXPORT" 2>/dev/null
+	# Without this the file exists but nothing backed by MediaStore lists it.
+	content call --uri content://media --method scan_file \
+		--arg /storage/emulated/0/Download/"${AVCEXPORT##*/}" >/dev/null 2>&1
+	xlog "selinux: exported $(grep -c 'avc: ' "$AVCEXPORT" 2>/dev/null) denials to $AVCEXPORT"
+}
+
 # Guard: the SurfaceFlinger-poking paths must never run before the framework is
 # fully up. init also gates the triggers on sys.boot_completed, but a manual/
 # early invocation must be a no-op too.
@@ -365,6 +403,7 @@ case "$CMD" in
 	vkcache_clear) vkcache_clear ;;
 	selinux)   selinux_apply ;;
 	avclog_clear) avclog_clear ;;
+	avclog_export) avclog_export ;;
 	# Compile-progress relay: exits quietly, and must NOT clear sys.xdplus.action
 	# (it never set it).
 	vknotify)  vknotify; exit 0 ;;
