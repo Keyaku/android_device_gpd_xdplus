@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The vendor supplicant HIDL has no SAE: auto-upgrading a transition-mode
+     AP to SAE makes setKeyMgmt fail and the network unjoinable. -->
+<resources>
+    <bool translatable="false" name="config_wifiSaeUpgradeEnabled">false</bool>
+</resources>
