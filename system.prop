@@ -32,7 +32,6 @@ ro.opengles.version=196610
 # meant the loader never found /vendor/lib64/hw/vulkan.mt8173.so (0 phys devices).
 ro.hardware.vulkan=mt8173
 
-wifi.direct.interface=p2p0
 dalvik.vm.heapgrowthlimit=128m
 dalvik.vm.heapsize=256m
 

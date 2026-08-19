@@ -59,6 +59,14 @@
            groups="pdk-cw-fs,pdk-fs"
            revision="refs/heads/lineage-18.1" />
 
+  <remove-project name="LineageOS/android_external_wpa_supplicant_8" />
+
+  <project path="external/wpa_supplicant_8"
+           name="android_external_wpa_supplicant_8"
+           remote="keyaku"
+           groups="pdk"
+           revision="refs/heads/lineage-18.1-xdplus" />
+
   <project path="vendor/gpd/xdplus"
            name="android_vendor_gpd_xdplus"
            remote="keyaku"
