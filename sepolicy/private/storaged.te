@@ -1,0 +1,3 @@
+# The platform expects block stat sysfs nodes to be labelled sysfs_disk_stat.
+# On this SoC they stay unlabelled, so allow direct sysfs read.
+r_dir_file(storaged, sysfs);

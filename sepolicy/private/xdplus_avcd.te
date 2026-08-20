@@ -24,6 +24,9 @@ allow xdplus_avcd kmsg_device:chr_file r_file_perms;
 
 # Its own directory under /data/misc. It cannot live in system_data_file:
 # domain.te neverallows a new domain from writing there.
-allow xdplus_avcd xdplus_data_file:dir { search write add_name remove_name };
+allow xdplus_avcd xdplus_data_file:dir { search write add_name remove_name create setattr getattr };
 allow xdplus_avcd xdplus_data_file:file { create open read write append getattr setattr rename unlink };
 allow xdplus_avcd self:capability { chown fowner fsetid };
+
+# Records the current SELinux mode at startup.
+allow xdplus_avcd selinuxfs:file { read open getattr };

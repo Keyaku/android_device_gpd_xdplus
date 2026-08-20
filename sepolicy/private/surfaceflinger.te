@@ -1,0 +1,2 @@
+# Reads /sys/devices/virtual/BOOT/BOOT/boot/boot_mode.
+r_dir_file(surfaceflinger, sysfs);

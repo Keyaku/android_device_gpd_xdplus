@@ -337,5 +337,12 @@ PRODUCT_PACKAGES += \
 PRODUCT_AAPT_CONFIG := normal hdpi
 PRODUCT_AAPT_PREF_CONFIG := hdpi
 
+# The system cgroups.json mounts a cgroup v2 freezer subtree under /sys/fs/cgroup,
+# which init cannot create on this device without a neverallowed init -> sysfs:dir
+# create rule. Override the v2 descriptor from vendor space with no controllers so
+# only the v2 root is mounted; userspace reboot is disabled to match.
+PRODUCT_PROPERTY_OVERRIDES += \
+    init.userspace_reboot.is_supported=false
+
 # call the proprietary setup
 $(call inherit-product, vendor/gpd/xdplus/xdplus-vendor.mk)

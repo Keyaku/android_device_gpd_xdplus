@@ -69,6 +69,11 @@ allow xdplus_tweaks input_service:service_manager find;
 # system_server calls back into the script's binder thread while it is dumping.
 binder_call(system_server, xdplus_tweaks)
 
+# SELinux mode readback for the boot trigger and the Settings page. Setting the
+# mode from userspace is neverallow-ed to every domain except kernel; this device
+# switches via androidboot.selinux= on the kernel command line instead.
+allow xdplus_tweaks selinuxfs:file { read open getattr };
+
 # `am broadcast` runs through app_process, not a plain toolbox applet.
 allow xdplus_tweaks zygote_exec:file rx_file_perms;
 allow xdplus_tweaks dalvikcache_data_file:dir { search getattr };

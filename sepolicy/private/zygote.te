@@ -1,0 +1,6 @@
+# Zygote task-profile writes. /dev/stune is mounted without the cgroup label on
+# this device, so zygote's writes to tasks files land on the generic device type.
+allow zygote device:file { open write read getattr };
+
+# Camera-less device, but zygote still reads the exported camera prop at startup.
+get_prop(zygote, exported_camera_prop);

@@ -32,3 +32,15 @@
 # /data/misc is system_data_file, which domain.te neverallows a new domain from
 # writing. init creates the directory at post-fs-data so this label is applied.
 /data/misc/xdplus(/.*)?                                               u:object_r:xdplus_data_file:s0
+
+# cgroup v1 controllers are mounted without a label on this device; label them as
+# cgroup so the platform zygote rules apply. The fallback zygote -> device rule
+# covers anything this does not catch.
+/dev/stune(/.*)?                                                       u:object_r:cgroup:s0
+/dev/blkio(/.*)?                                                       u:object_r:cgroup:s0
+/dev/memcg(/.*)?                                                       u:object_r:cgroup:s0
+
+# cgroup v2 is not used on this device. The system cgroups.json mounts a
+# freezer subtree under /sys/fs/cgroup; vendor cgroups.json overrides Cgroups2
+# with no Controllers so the freezer directory is never created and init does
+# not need a sysfs create allow that domain.te neverallows.
