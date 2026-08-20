@@ -10,6 +10,8 @@
  *
  */
 #include "includes.h"
+#include <sys/ioctl.h>
+#include <net/if.h>
 #include <linux/wireless.h>
 #include "netlink/genl/genl.h"
 
@@ -23,6 +25,14 @@
 #endif
 
 #include "driver_i.h"
+
+#define PRIV_CMD_SIZE 512
+
+struct mtk_wifi_priv_cmd {
+    char buf[PRIV_CMD_SIZE];
+    int used_len;
+    int total_len;
+};
 
 #include "eloop.h"
 
@@ -218,6 +228,32 @@ int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
         ret = 0; /* mt5921 linux driver not implement yet */
     } else if (os_strncasecmp(cmd, "btcoexmode", 10) == 0) {
         ret = 0; /* mt5921 linux driver not implement yet */
+    } else if (os_strncasecmp(cmd, "SETSUSPENDMODE ", 15) == 0) {
+        struct mtk_wifi_priv_cmd priv_cmd;
+        int cmd_len = os_strlen(cmd);
+
+        os_memset(&ifr, 0, sizeof(ifr));
+        os_memset(&priv_cmd, 0, sizeof(priv_cmd));
+        os_strlcpy(ifr.ifr_name, bss->ifname, IFNAMSIZ);
+        if (cmd_len >= PRIV_CMD_SIZE) {
+            wpa_printf(MSG_INFO, "%s: SETSUSPENDMODE command too long", __func__);
+            ret = -1;
+        } else {
+            os_memcpy(priv_cmd.buf, cmd, cmd_len);
+            priv_cmd.buf[cmd_len] = '\0';
+            priv_cmd.used_len = cmd_len + 1;
+            priv_cmd.total_len = PRIV_CMD_SIZE;
+            ifr.ifr_data = &priv_cmd;
+
+            ret = ioctl(drv->global->ioctl_sock, SIOCDEVPRIVATE + 1, &ifr);
+            if (ret < 0) {
+                wpa_printf(MSG_ERROR, "%s: SETSUSPENDMODE ioctl failed: %s",
+                          __func__, strerror(errno));
+            } else {
+                wpa_printf(MSG_DEBUG, "%s: SETSUSPENDMODE issued", __func__);
+                ret = 0;
+            }
+        }
     } else {
         handled = 0;
         wpa_printf(MSG_INFO, "Unsupported command");
