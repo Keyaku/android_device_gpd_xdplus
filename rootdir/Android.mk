@@ -29,10 +29,3 @@ LOCAL_SRC_FILES := system/bin/xdplus_wifi_seed
 LOCAL_MODULE_SUFFIX :=
 include $(BUILD_PREBUILT)
 
-include $(CLEAR_VARS)
-LOCAL_MODULE := xdplus_avcd
-LOCAL_MODULE_CLASS := EXECUTABLES
-LOCAL_MODULE_TAGS := optional
-LOCAL_SRC_FILES := system/bin/xdplus_avcd
-LOCAL_MODULE_SUFFIX :=
-include $(BUILD_PREBUILT)
