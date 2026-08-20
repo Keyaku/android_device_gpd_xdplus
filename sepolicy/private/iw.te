@@ -11,4 +11,4 @@
 # netlink_socket class rather than netlink_generic_socket.
 allow iw self:netlink_socket { create bind read write getattr setopt };
 allow iw self:udp_socket { create ioctl };
-allow iw self:capability net_raw;
+allow iw self:capability { net_raw net_admin };
