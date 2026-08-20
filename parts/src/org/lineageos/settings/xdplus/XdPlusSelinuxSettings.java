@@ -35,6 +35,9 @@ public class XdPlusSelinuxSettings extends XdPlusFragmentBase {
     private static final String PROP_ENFORCE = "persist.sys.xdplus.selinux_enforce";
     // init starts/stops xdplus_avcd on this property's edges.
     private static final String PROP_AVCLOG = "persist.sys.xdplus.avclog";
+    // xdplus_tweaks publishes the live mode here because system_app cannot read
+    // /sys/fs/selinux/enforce under enforcement.
+    private static final String PROP_MODE = "sys.xdplus.selinux_mode";
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -66,13 +69,15 @@ public class XdPlusSelinuxSettings extends XdPlusFragmentBase {
     }
 
     // The live mode, not the boot argument: enforcing can be turned on after boot.
-    // ⚠️ Under enforcing this read is itself denied to system_app, and the
-    // fallback then reports the boot argument instead.
+    // The privileged side publishes it because system_app cannot read selinuxfs.
     private String currentMode() {
         boolean enforcing;
-        try (BufferedReader r = new BufferedReader(new FileReader("/sys/fs/selinux/enforce"))) {
-            enforcing = "1".equals(r.readLine().trim());
-        } catch (Exception e) {
+        String mode = SystemProperties.get(PROP_MODE, "");
+        if ("enforcing".equals(mode)) {
+            enforcing = true;
+        } else if ("permissive".equals(mode)) {
+            enforcing = false;
+        } else {
             enforcing = SystemProperties.getBoolean(PROP_ENFORCE, false)
                     || !"permissive".equals(SystemProperties.get("ro.boot.selinux", ""));
         }
