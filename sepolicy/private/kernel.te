@@ -1,0 +1,4 @@
+# exfat driver creates .nomedia / .thumbnails on the microSD on behalf of
+# MediaProvider; the filesystem-level operations are attributed to the kernel domain.
+allow kernel exfat:dir { add_name remove_name write };
+allow kernel exfat:file { create unlink };

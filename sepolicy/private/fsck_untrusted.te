@@ -1,0 +1,2 @@
+# fsck reads partition start from unlabelled block sysfs on adoptable storage.
+r_dir_file(fsck_untrusted, sysfs);
