@@ -22,7 +22,7 @@ CTL=/system/bin/hdmictl
 # mount, no composer restart, survives reboots. BLOB is only the legacy fallback.
 BLOB=/data/local/tmp/hwcomposer.patched.so
 VBLOB=/system/vendor/lib64/hw/hwcomposer.mt8173.so
-VBLOB_MD5=54b28199
+VBLOB_MD5=2959481b
 
 # NOTE: never name this function 'log' — a same-named function shadows the /system/bin/log
 # binary and recurses infinitely, hanging the service. Use the binary by full path.
