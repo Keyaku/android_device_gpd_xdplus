@@ -1,3 +1,6 @@
 # Userspace reboot feature flags.
 get_prop(system_server, userspace_reboot_exported_prop);
 get_prop(system_server, userspace_reboot_config_prop);
+
+# Vendor patch level: read-only config prop, queried once at boot.
+get_prop(system_server, vendor_security_patch_level_prop);
