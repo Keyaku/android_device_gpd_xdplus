@@ -1,6 +1,6 @@
-// Holds one layer on layer stack 0 while a second display is attached, so an app whose
-// visible list collapses to a single layer cannot drop the mini-HDMI mirror. Runs as the
-// xdplus-mirrorpin service; the same binary takes a size and alpha for measuring by hand.
+// Diagnostic only: holds one layer on layer stack 0 at a chosen size and alpha.
+// Not shipped and not run as a service -- since vendor rev 9 the composer blob
+// accepts a mirror whose primary has collapsed to a single layer.
 cc_binary {
 	name: "xdplus_pinlayer",
 	srcs: ["pinlayer.cpp"],

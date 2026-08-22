@@ -14,9 +14,6 @@
     <string name="xdplus_hdmi_down_summary" translatable="false">Stops HDMI output and returns to the built-in screen. Also the way out if either picture freezes, or if the built-in screen comes back wrong.</string>
     <string name="xdplus_hdmi_down_toast" translatable="false">Tearing down HDMI…</string>
 
-    <string name="xdplus_hdmi_pin_layer_title" translatable="false">Keep the monitor alive in fullscreen apps</string>
-    <string name="xdplus_hdmi_pin_layer_summary" translatable="false">Holds one nearly invisible pixel on screen while a monitor is connected. Without it, games and other fullscreen apps freeze the monitor until you leave them. Takes effect within a few seconds. Leave it on unless you are testing.</string>
-
     <string name="xdplus_hdmi_res_title" translatable="false">HDMI resolution</string>
     <!-- %1$s is the chosen mode. The script reads the property when the mirror
          starts, so a change does not touch a running one. -->

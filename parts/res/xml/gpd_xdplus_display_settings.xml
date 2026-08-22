@@ -25,11 +25,6 @@
         android:title="@string/xdplus_hdmi_down_title"
         android:summary="@string/xdplus_hdmi_down_summary" />
 
-    <SwitchPreference
-        android:key="xdplus_hdmi_pin_layer"
-        android:title="@string/xdplus_hdmi_pin_layer_title"
-        android:summary="@string/xdplus_hdmi_pin_layer_summary" />
-
     <ListPreference
         android:key="xdplus_hdmi_res"
         android:title="@string/xdplus_hdmi_res_title"
