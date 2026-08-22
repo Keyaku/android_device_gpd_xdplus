@@ -100,14 +100,15 @@
     </string-array>
 
     <!-- Sorted high -> low. 720p60 is the only latch-stable mode, so it carries
-         the Recommended tag. Values: 1=1080, 2=720, 0=480. -->
+         the Recommended tag. Values are the kernel's HDMI_VIDEO_* enum, passed
+         straight to hdmictl res: 11=1080p60, 2=720p60, 0=480p60. -->
     <string-array name="xdplus_hdmi_res_entries" translatable="false">
         <item>1080p60</item>
         <item>720p60 (Recommended)</item>
         <item>480p60</item>
     </string-array>
     <string-array name="xdplus_hdmi_res_values" translatable="false">
-        <item>1</item>
+        <item>11</item>
         <item>2</item>
         <item>0</item>
     </string-array>
