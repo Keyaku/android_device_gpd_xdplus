@@ -1,0 +1,179 @@
+From f388b8811acec0115d9b5dde9a916eb6a5b5fcb9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 23:42:15 +0100
+Subject: [PATCH] SurfaceFlinger: force the external validate path only off the
+ mirror
+
+The forced validate/present path for external displays was a per-display
+boolean, so choosing it cost the vendor composer's DECOUPLE_MIRROR path
+entirely: the blob abandons its mirror as soon as the external display
+carries a framebuffer target, which is exactly what validating produces.
+Mirroring and independent external content therefore looked mutually
+exclusive, selected once at boot.
+
+They are not. The decision is evaluated per display per frame, and
+Display already distinguishes the two cases for the sibling fix that keeps
+a mirroring external off client composition. Split the geometry test out
+of isMirroringExternal() as isExternalMirrorStack(), so it is free of the
+mirror_no_client policy gate, and pass it down: a mirroring external keeps
+the fast presentOrValidate path, while an external showing its own content
+validates and can finally be given a client target.
+
+No behaviour changes at the shipped default, which leaves
+persist.sys.xdplus.hdmi_force_validate at 0. That property is read every
+frame, so the new path can be armed at runtime without a reboot.
+
+Change-Id: Ifead5a19f6020bd304caa377bf80fee71e6d9f91
+---
+ .../include/compositionengine/impl/Display.h           |  2 ++
+ .../surfaceflinger/CompositionEngine/src/Display.cpp   | 10 +++++++---
+ .../CompositionEngine/tests/DisplayTest.cpp            |  6 +++---
+ .../CompositionEngine/tests/MockHWComposer.h           |  4 ++--
+ services/surfaceflinger/DisplayHardware/HWComposer.cpp |  9 +++++----
+ services/surfaceflinger/DisplayHardware/HWComposer.h   |  4 ++--
+ 6 files changed, 21 insertions(+), 14 deletions(-)
+
+diff --git a/services/surfaceflinger/CompositionEngine/include/compositionengine/impl/Display.h b/services/surfaceflinger/CompositionEngine/include/compositionengine/impl/Display.h
+index b302eef57a..f42b235984 100644
+--- a/services/surfaceflinger/CompositionEngine/include/compositionengine/impl/Display.h
++++ b/services/surfaceflinger/CompositionEngine/include/compositionengine/impl/Display.h
+@@ -73,6 +73,8 @@ public:
+     using ClientTargetProperty = android::HWComposer::DeviceRequestedChanges::ClientTargetProperty;
+     virtual bool anyLayersRequireClientComposition() const;
+     virtual bool allLayersRequireClientComposition() const;
++    // Geometry only: the external is showing the primary's layer stack.
++    virtual bool isExternalMirrorStack() const;
+     virtual bool isMirroringExternal() const;
+     virtual void applyChangedTypesToLayers(const ChangedTypes&);
+     virtual void applyDisplayRequests(const DisplayRequests&);
+diff --git a/services/surfaceflinger/CompositionEngine/src/Display.cpp b/services/surfaceflinger/CompositionEngine/src/Display.cpp
+index df9996f789..3b21ab0b21 100644
+--- a/services/surfaceflinger/CompositionEngine/src/Display.cpp
++++ b/services/surfaceflinger/CompositionEngine/src/Display.cpp
+@@ -250,7 +250,7 @@ void Display::chooseCompositionStrategy() {
+     std::optional<android::HWComposer::DeviceRequestedChanges> changes;
+     auto& hwc = getCompositionEngine().getHwComposer();
+     if (status_t result = hwc.getDeviceCompositionChanges(*mId, anyLayersRequireClientComposition(),
+-                                                          &changes);
++                                                          isExternalMirrorStack(), &changes);
+         result != NO_ERROR) {
+         ALOGE("chooseCompositionStrategy failed for %s: %d (%s)", getName().c_str(), result,
+               strerror(-result));
+@@ -275,13 +275,17 @@ void Display::chooseCompositionStrategy() {
+     }
+ }
+ 
+-bool Display::isMirroringExternal() const {
++bool Display::isExternalMirrorStack() const {
+     if (!mId || mIsVirtual) {
+         return false;
+     }
+     const auto& state = getState();
+     // A display with its own layer stack has content of its own and is not a mirror.
+-    if (state.layerStackInternal || state.layerStackId != 0) {
++    return !state.layerStackInternal && state.layerStackId == 0;
++}
++
++bool Display::isMirroringExternal() const {
++    if (!isExternalMirrorStack()) {
+         return false;
+     }
+     static const bool enabled =
+diff --git a/services/surfaceflinger/CompositionEngine/tests/DisplayTest.cpp b/services/surfaceflinger/CompositionEngine/tests/DisplayTest.cpp
+index 29fd4b9886..7d5d53c0fa 100644
+--- a/services/surfaceflinger/CompositionEngine/tests/DisplayTest.cpp
++++ b/services/surfaceflinger/CompositionEngine/tests/DisplayTest.cpp
+@@ -617,7 +617,7 @@ TEST_F(DisplayChooseCompositionStrategyTest, takesEarlyOutIfNotAHwcDisplay) {
+ 
+ TEST_F(DisplayChooseCompositionStrategyTest, takesEarlyOutOnHwcError) {
+     EXPECT_CALL(*mDisplay, anyLayersRequireClientComposition()).WillOnce(Return(false));
+-    EXPECT_CALL(mHwComposer, getDeviceCompositionChanges(DEFAULT_DISPLAY_ID, false, _))
++    EXPECT_CALL(mHwComposer, getDeviceCompositionChanges(DEFAULT_DISPLAY_ID, false, _, _))
+             .WillOnce(Return(INVALID_OPERATION));
+ 
+     mDisplay->chooseCompositionStrategy();
+@@ -639,7 +639,7 @@ TEST_F(DisplayChooseCompositionStrategyTest, normalOperation) {
+             .InSequence(s)
+             .WillOnce(Return(false));
+ 
+-    EXPECT_CALL(mHwComposer, getDeviceCompositionChanges(DEFAULT_DISPLAY_ID, true, _))
++    EXPECT_CALL(mHwComposer, getDeviceCompositionChanges(DEFAULT_DISPLAY_ID, true, _, _))
+             .WillOnce(Return(NO_ERROR));
+     EXPECT_CALL(*mDisplay, allLayersRequireClientComposition()).WillOnce(Return(false));
+ 
+@@ -669,7 +669,7 @@ TEST_F(DisplayChooseCompositionStrategyTest, normalOperationWithChanges) {
+             .InSequence(s)
+             .WillOnce(Return(false));
+ 
+-    EXPECT_CALL(mHwComposer, getDeviceCompositionChanges(DEFAULT_DISPLAY_ID, true, _))
++    EXPECT_CALL(mHwComposer, getDeviceCompositionChanges(DEFAULT_DISPLAY_ID, true, _, _))
+             .WillOnce(DoAll(SetArgPointee<2>(changes), Return(NO_ERROR)));
+     EXPECT_CALL(*mDisplay, applyChangedTypesToLayers(changes.changedTypes)).Times(1);
+     EXPECT_CALL(*mDisplay, applyDisplayRequests(changes.displayRequests)).Times(1);
+diff --git a/services/surfaceflinger/CompositionEngine/tests/MockHWComposer.h b/services/surfaceflinger/CompositionEngine/tests/MockHWComposer.h
+index 75a4fec8fb..086937bc46 100644
+--- a/services/surfaceflinger/CompositionEngine/tests/MockHWComposer.h
++++ b/services/surfaceflinger/CompositionEngine/tests/MockHWComposer.h
+@@ -49,8 +49,8 @@ public:
+     MOCK_METHOD2(allocatePhysicalDisplay, void(hal::HWDisplayId, DisplayId));
+     MOCK_METHOD1(createLayer, HWC2::Layer*(DisplayId));
+     MOCK_METHOD2(destroyLayer, void(DisplayId, HWC2::Layer*));
+-    MOCK_METHOD3(getDeviceCompositionChanges,
+-                 status_t(DisplayId, bool,
++    MOCK_METHOD4(getDeviceCompositionChanges,
++                 status_t(DisplayId, bool, bool,
+                           std::optional<android::HWComposer::DeviceRequestedChanges>*));
+     MOCK_METHOD5(setClientTarget,
+                  status_t(DisplayId, uint32_t, const sp<Fence>&, const sp<GraphicBuffer>&,
+diff --git a/services/surfaceflinger/DisplayHardware/HWComposer.cpp b/services/surfaceflinger/DisplayHardware/HWComposer.cpp
+index 5c96310586..25056b1b89 100644
+--- a/services/surfaceflinger/DisplayHardware/HWComposer.cpp
++++ b/services/surfaceflinger/DisplayHardware/HWComposer.cpp
+@@ -484,7 +484,7 @@ status_t HWComposer::setClientTarget(DisplayId displayId, uint32_t slot,
+ }
+ 
+ status_t HWComposer::getDeviceCompositionChanges(
+-        DisplayId displayId, bool frameUsesClientComposition,
++        DisplayId displayId, bool frameUsesClientComposition, bool displayMirrorsPrimary,
+         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
+     ATRACE_CALL();
+ 
+@@ -509,9 +509,10 @@ status_t HWComposer::getDeviceCompositionChanges(
+     // with "present succeeded" while it has internally marked every layer CLIENT.
+     // SF therefore never validates, never learns about the change, and never
+     // renders a client target, so HWC bypasses the display forever
+-    // ("[JOB] (1) SET/bypass/no layers") and the monitor stays dark. Take the slow
+-    // validate/present path for external displays.
+-    const bool forceValidate = !displayData.isVirtual &&
++    // ("[JOB] (1) SET/bypass/no layers") and the monitor stays dark.
++    // Only while the external shows its own content: the blob drops its mirror
++    // as soon as the external carries a framebuffer target.
++    const bool forceValidate = !displayData.isVirtual && !displayMirrorsPrimary &&
+             getDisplayConnectionType(displayId) == DisplayConnectionType::External &&
+             property_get_bool("persist.sys.xdplus.hdmi_force_validate", 1);
+ 
+diff --git a/services/surfaceflinger/DisplayHardware/HWComposer.h b/services/surfaceflinger/DisplayHardware/HWComposer.h
+index c355ebd4a6..bd6d41b658 100644
+--- a/services/surfaceflinger/DisplayHardware/HWComposer.h
++++ b/services/surfaceflinger/DisplayHardware/HWComposer.h
+@@ -108,7 +108,7 @@ public:
+     // with fewer handshakes, but this does not work if client composition is
+     // expected.
+     virtual status_t getDeviceCompositionChanges(
+-            DisplayId, bool frameUsesClientComposition,
++            DisplayId, bool frameUsesClientComposition, bool displayMirrorsPrimary,
+             std::optional<DeviceRequestedChanges>* outChanges) = 0;
+ 
+     virtual status_t setClientTarget(DisplayId displayId, uint32_t slot,
+@@ -256,7 +256,7 @@ public:
+     void destroyLayer(DisplayId displayId, HWC2::Layer* layer) override;
+ 
+     status_t getDeviceCompositionChanges(
+-            DisplayId, bool frameUsesClientComposition,
++            DisplayId, bool frameUsesClientComposition, bool displayMirrorsPrimary,
+             std::optional<DeviceRequestedChanges>* outChanges) override;
+ 
+     status_t setClientTarget(DisplayId displayId, uint32_t slot, const sp<Fence>& acquireFence,
+-- 
+2.55.0
+

@@ -120,11 +120,12 @@ persist.sys.wifi_ps_pin_off=1
 # No APK modification needed; Vulkan games remain untouched.
 persist.sys.xdplus.flutter_disable_impeller=dev.imranr.obtainium,dev.bikram.obtainx
 
-# HDMI output: mirror-first default. persist.sys.xdplus.hdmi_force_validate is
-# read by SurfaceFlinger once at startup; 0 lets the vendor composer enter its
-# DECOUPLE_MIRROR path, 1 forces the external display onto CLIENT composition
-# (the extension-mode path that leaves the built-in panel frozen). The Settings
-# toggle still allows flipping to extension mode, but it takes a reboot.
+# HDMI output. persist.sys.xdplus.hdmi_force_validate is read by SurfaceFlinger
+# EVERY FRAME, so it takes effect live -- no reboot, despite what the Settings
+# toggle says. It now applies only while the external shows its own content: a
+# mirroring external always keeps the fast presentOrValidate path, because the
+# composer drops its mirror the moment the external carries a framebuffer target.
+# Default stays 0 until the content-aware path is proven on hardware.
 persist.sys.xdplus.hdmi_force_validate=0
 
 # Mirror pacing: stop the composer from pacing external frames on vsync. The
