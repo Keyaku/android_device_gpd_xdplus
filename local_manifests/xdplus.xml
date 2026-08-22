@@ -9,7 +9,7 @@
       mkdir -p .repo/local_manifests
       cp device/gpd/xdplus/local_manifests/xdplus.xml .repo/local_manifests/
 
-  All three projects below are pushed and public, so activating this on a fresh
+  All five projects below are pushed and public, so activating this on a fresh
   checkout is an ordinary copy. On a machine that already carries standalone
   clones at those paths it is still a migration: repo refuses to adopt them
   ("unsupported checkout state") and device/gpd/xdplus/keys/ is gitignored, so a
