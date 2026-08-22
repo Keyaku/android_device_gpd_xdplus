@@ -101,13 +101,17 @@
 
     <!-- Sorted high -> low. 720p60 is the only latch-stable mode, so it carries
          the Recommended tag. Values are the kernel's HDMI_VIDEO_* enum, passed
-         straight to hdmictl res: 11=1080p60, 2=720p60, 0=480p60. -->
+         straight to hdmictl res: 23=2160p30, 11=1080p60, 2=720p60, 0=480p60.
+         2160p30 is driven correctly by the kernel but blanks a sink that will
+         not take it; the mode is only as good as the monitor. -->
     <string-array name="xdplus_hdmi_res_entries" translatable="false">
+        <item>2160p30 (4K, needs a 4K monitor)</item>
         <item>1080p60</item>
         <item>720p60 (Recommended)</item>
         <item>480p60</item>
     </string-array>
     <string-array name="xdplus_hdmi_res_values" translatable="false">
+        <item>23</item>
         <item>11</item>
         <item>2</item>
         <item>0</item>
