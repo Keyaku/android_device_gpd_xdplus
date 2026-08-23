@@ -5,12 +5,27 @@
 # installed module that "overrides" it makes the build skip installing it.
 #
 # Removes: Camera2 (device has no camera; features already stripped via
-# sysconfig/xdplus-removed-features.xml).
+# sysconfig/xdplus-removed-features.xml), plus apps this handheld has no use for.
+#
+# ThemePicker and StorageManager each leave a caller behind; both are neutralised
+# by static overlays under overlay/, not by source patches:
+#   ThemePicker    -> Trebuchet pins ACTION_SET_WALLPAPER to com.android.wallpaper,
+#                     so overlay/packages/apps/Trebuchet blanks wallpaper_picker_package.
+#   StorageManager -> Settings' storage donut fires an unguarded ACTION_MANAGE_STORAGE,
+#                     so overlay/packages/apps/Settings hides that button.
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_PACKAGE_NAME := xdplusRemovedApps
-LOCAL_OVERRIDES_PACKAGES := Camera2
+LOCAL_OVERRIDES_PACKAGES := \
+    Camera2 \
+    Backgrounds \
+    Eleven \
+    Etar \
+    PhotoTable \
+    StorageManager \
+    ThemePicker
+
 LOCAL_SDK_VERSION := current
 LOCAL_CERTIFICATE := platform
 LOCAL_MANIFEST_FILE := AndroidManifest.xml
