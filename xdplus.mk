@@ -340,5 +340,23 @@ PRODUCT_AAPT_PREF_CONFIG := hdpi
 PRODUCT_PROPERTY_OVERRIDES += \
     init.userspace_reboot.is_supported=false
 
+# SELinux default, by build variant. A userdebug build is the maintainer's daily
+# driver and enforces so denials get harvested from real use; a user build ships
+# permissive until the policy is finished.
+#
+# This is only a DEFAULT: init loads build.prop before /data's persistent
+# properties, so the in-Settings toggle still wins once it has written one.
+# The denial recorder goes with it: enforcing without it collects nothing, and it
+# holds a dmesg reader open all boot, which a user build should not pay for.
+ifeq ($(TARGET_BUILD_VARIANT),user)
+PRODUCT_PROPERTY_OVERRIDES += \
+    persist.sys.xdplus.selinux_enforce=0 \
+    persist.sys.xdplus.avclog=0
+else
+PRODUCT_PROPERTY_OVERRIDES += \
+    persist.sys.xdplus.selinux_enforce=1 \
+    persist.sys.xdplus.avclog=1
+endif
+
 # call the proprietary setup
 $(call inherit-product, vendor/gpd/xdplus/xdplus-vendor.mk)

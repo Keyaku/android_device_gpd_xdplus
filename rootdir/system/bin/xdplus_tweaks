@@ -332,7 +332,8 @@ prune_retired_props() {
 
 AVCLOG=/data/misc/xdplus/avc-denials.log
 
-# Opt-in enforcing, off unless asked for. The build ships permissive.
+# Enforcing default comes from build.prop and is set by build variant in xdplus.mk:
+# userdebug enforces (denial harvesting), user ships permissive. Toggle still wins.
 selinux_apply() {
 	if [ "$(getprop persist.sys.xdplus.selinux_enforce)" = "1" ]; then
 		if [ "$(getenforce)" != "Enforcing" ]; then
