@@ -1,4 +1,5 @@
-# exfat driver creates .nomedia / .thumbnails on the microSD on behalf of
-# MediaProvider; the filesystem-level operations are attributed to the kernel domain.
-allow kernel exfat:dir { add_name remove_name write };
-allow kernel exfat:file { create unlink };
+# sdcardfs defers create/mkdir/unlink on the lower exfat microSD to a workqueue,
+# so those land in the kernel domain instead of the calling app's.
+allow kernel exfat:dir { search add_name remove_name write create };
+# The deferred mkdir then opens Android/{data,obb}/.nomedia O_RDWR|O_CREAT.
+allow kernel exfat:file { create unlink open read write };
