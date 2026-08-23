@@ -39,16 +39,13 @@ xlog() { /system/bin/log -t xdplus_tweaks "$*" 2>/dev/null; echo "xdplus_tweaks:
 # by the blank and must be brought up again afterwards.
 #
 # Preconditions, all discovered the hard way:
-#  - persist.sys.xdplus.hdmi_force_validate must have been 0 AT BOOT.
-#    SurfaceFlinger reads it once at startup; the forced validate makes the
-#    external display CLIENT-composed with a single layer, the blob's
-#    isMirrorList then fails (chkMir L3819), and no live prop write can fix it.
 #  - debug.hwc.mirror_state must be 1 BEFORE display 1 hotplugs: the mirror
 #    output queue is only created in HWCDispatcher::onPlugIn.
 #  - The keyguard must be dismissed: its KEYGUARD_DIALOG presentation on the
 #    external display makes WindowManager report the display as having content,
 #    DisplayManager then gives it its own layer stack instead of mirroring
 #    stack 0, and the blob refuses (I-size mismatch at chkMir L3819).
+
 # Poll a condition instead of sleeping through it. $1 is the old sleep's length
 # and becomes the timeout, so the worst case is unchanged and the typical case is
 # as fast as the hardware allows; returns 0 the moment the condition holds, 1 on
@@ -87,9 +84,8 @@ hdmi_up() {
 		return 1
 	fi
 
-	# Was an abort: forcing the external onto the validate path used to be
-	# incompatible with having a mirror at all. It is now decided per display per
-	# frame, so a mirroring external keeps the fast path and this only warns.
+	# Forcing the validate path is decided per display per frame, so a mirroring
+	# external keeps the fast path: no longer a precondition, hence only a note.
 	if [ "$(getprop persist.sys.xdplus.hdmi_force_validate)" != "0" ]; then
 		xlog "note: hdmi_force_validate is set; the external validates when it carries its own content"
 	fi
