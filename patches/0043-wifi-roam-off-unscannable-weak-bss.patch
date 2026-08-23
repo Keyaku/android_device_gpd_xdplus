@@ -1,0 +1,22 @@
+diff --git a/service/java/com/android/server/wifi/WifiNetworkSelector.java b/service/java/com/android/server/wifi/WifiNetworkSelector.java
+index fbbcb31..4ad6863 100644
+--- a/service/java/com/android/server/wifi/WifiNetworkSelector.java
++++ b/service/java/com/android/server/wifi/WifiNetworkSelector.java
+@@ -784,9 +784,16 @@ public class WifiNetworkSelector {
+             registeredNominator.update(scanDetails);
+         }
+ 
++        // A link below the band entry RSSI must not keep the "current BSSID missing from scan"
++        // guard alive, or a BSS too weak to be scanned can never be roamed away from.
++        int currentRssi = wifiInfo.getRssi();
++        boolean currentLinkTooWeak = currentRssi != WifiInfo.INVALID_RSSI
++                && currentRssi < mScoringParams.getEntryRssi(wifiInfo.getFrequency());
++
+         // Filter out unwanted networks.
+         mFilteredNetworks = filterScanResults(scanDetails, bssidBlacklist,
+-                connected && wifiInfo.getScore() >= WIFI_POOR_SCORE, currentBssid);
++                connected && wifiInfo.getScore() >= WIFI_POOR_SCORE && !currentLinkTooWeak,
++                currentBssid);
+         if (mFilteredNetworks.size() == 0) {
+             return null;
+         }
