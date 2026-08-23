@@ -28,7 +28,9 @@ PRODUCT_NAME := lineage_xdplus
 PRODUCT_DEVICE := xdplus
 PRODUCT_BRAND := GPD
 PRODUCT_MANUFACTURER := GPD
-PRODUCT_MODEL := xdplus
+# Model is the user-facing name; DEVICE stays the codename (it feeds the
+# fingerprint, the lunch target and the out/ path).
+PRODUCT_MODEL := XD+
 
 PRODUCT_BUILD_PROP_OVERRIDES += \
     PRODUCT_DEVICE="xdplus"
