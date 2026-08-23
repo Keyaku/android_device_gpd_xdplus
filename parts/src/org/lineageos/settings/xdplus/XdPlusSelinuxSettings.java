@@ -1,8 +1,10 @@
 /*
  * GPD XD+ → SELinux.
  *
- * The build ships permissive; this page turns enforcing on for one device
- * without moving that default, and exports what the policy denied.
+ * Which default the build ships is variant-dependent (user permissive,
+ * userdebug enforcing), so the page reads it rather than stating it; it turns
+ * enforcing on for one device without moving that default, and exports what
+ * the policy denied.
  *
  * Nothing here is privileged, and deliberately so: the page only sets
  * properties. Reading denials needs the kernel ring buffer and writing them
@@ -38,6 +40,9 @@ public class XdPlusSelinuxSettings extends XdPlusFragmentBase {
     // xdplus_tweaks publishes the live mode here because system_app cannot read
     // /sys/fs/selinux/enforce under enforcement.
     private static final String PROP_MODE = "sys.xdplus.selinux_mode";
+    // The default this build ships, set by variant in xdplus.mk. Absent on an
+    // image built before it existed, which the unknown clause covers.
+    private static final String PROP_DEFAULT = "ro.xdplus.selinux_default";
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -51,8 +56,8 @@ public class XdPlusSelinuxSettings extends XdPlusFragmentBase {
     @Override
     public void onResume() {
         super.onResume();
-        findPreference(KEY_ENFORCE).setSummary(
-                getString(R.string.xdplus_selinux_enforce_summary, currentMode()));
+        findPreference(KEY_ENFORCE).setSummary(getString(
+                R.string.xdplus_selinux_enforce_summary, currentMode(), shippedDefault()));
     }
 
     @Override
@@ -84,5 +89,18 @@ public class XdPlusSelinuxSettings extends XdPlusFragmentBase {
         return getString(enforcing
                 ? R.string.xdplus_selinux_enforcing
                 : R.string.xdplus_selinux_permissive);
+    }
+
+    // Never guess this: stating the wrong shipped default is the bug this reads
+    // a property to avoid.
+    private String shippedDefault() {
+        String def = SystemProperties.get(PROP_DEFAULT, "");
+        if ("enforcing".equals(def)) {
+            return getString(R.string.xdplus_selinux_default_enforcing);
+        }
+        if ("permissive".equals(def)) {
+            return getString(R.string.xdplus_selinux_default_permissive);
+        }
+        return getString(R.string.xdplus_selinux_default_unknown);
     }
 }

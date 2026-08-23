@@ -29,8 +29,14 @@
     <string name="gpd_xdplus_cat_selinux_summary" translatable="false">Enforcing mode, and exporting what it blocked</string>
 
     <string name="xdplus_selinux_enforce_title" translatable="false">Enforce SELinux</string>
-    <!-- %1$s is the mode the device is running in right now. -->
-    <string name="xdplus_selinux_enforce_summary" translatable="false">Currently %1$s. This build ships permissive: its policy is written but not finished, so enforcing can break things quietly — Wi-Fi and auto-rotate are the known ones. Applied at the next boot.</string>
+    <!-- %1$s is the mode the device is running in right now, %2$s one of the
+         three clauses below: which default this build ships is variant-dependent. -->
+    <string name="xdplus_selinux_enforce_summary" translatable="false">Currently %1$s. %2$s Applied at the next boot.</string>
+    <string name="xdplus_selinux_default_permissive" translatable="false">This build ships permissive: its policy is written but not finished, so enforcing can break things quietly — Wi-Fi and auto-rotate are the known ones.</string>
+    <string name="xdplus_selinux_default_enforcing" translatable="false">This build ships enforcing, so that denials turn up in normal use. The policy is not finished, so if something breaks quietly, turn this off — Wi-Fi and auto-rotate are the known ones.</string>
+    <!-- Fallback for an image built before ro.xdplus.selinux_default existed:
+         claim nothing about the default, since guessing it wrong is the bug. -->
+    <string name="xdplus_selinux_default_unknown" translatable="false">The policy is written but not finished, so enforcing can break things quietly — Wi-Fi and auto-rotate are the known ones.</string>
     <string name="xdplus_selinux_enforcing" translatable="false">enforcing</string>
     <string name="xdplus_selinux_permissive" translatable="false">permissive</string>
 
