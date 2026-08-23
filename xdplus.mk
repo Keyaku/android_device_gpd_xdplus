@@ -348,14 +348,18 @@ PRODUCT_PROPERTY_OVERRIDES += \
 # properties, so the in-Settings toggle still wins once it has written one.
 # The denial recorder goes with it: enforcing without it collects nothing, and it
 # holds a dmesg reader open all boot, which a user build should not pay for.
+# ro.xdplus.selinux_default is what the Settings page tells the user this build
+# ships. It is set here so the variant rule has exactly one source.
 ifeq ($(TARGET_BUILD_VARIANT),user)
 PRODUCT_PROPERTY_OVERRIDES += \
     persist.sys.xdplus.selinux_enforce=0 \
-    persist.sys.xdplus.avclog=0
+    persist.sys.xdplus.avclog=0 \
+    ro.xdplus.selinux_default=permissive
 else
 PRODUCT_PROPERTY_OVERRIDES += \
     persist.sys.xdplus.selinux_enforce=1 \
-    persist.sys.xdplus.avclog=1
+    persist.sys.xdplus.avclog=1 \
+    ro.xdplus.selinux_default=enforcing
 endif
 
 # call the proprietary setup

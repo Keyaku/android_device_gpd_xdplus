@@ -4,3 +4,4 @@
 # needs and would mean granting our daemon write access to every system property.
 sys.xdplus.             u:object_r:xdplus_prop:s0
 persist.sys.xdplus.     u:object_r:xdplus_prop:s0
+ro.xdplus.              u:object_r:xdplus_prop:s0
