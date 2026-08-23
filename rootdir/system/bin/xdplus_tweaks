@@ -87,9 +87,11 @@ hdmi_up() {
 		return 1
 	fi
 
+	# Was an abort: forcing the external onto the validate path used to be
+	# incompatible with having a mirror at all. It is now decided per display per
+	# frame, so a mirroring external keeps the fast path and this only warns.
 	if [ "$(getprop persist.sys.xdplus.hdmi_force_validate)" != "0" ]; then
-		xlog "mirror mode not armed (hdmi_force_validate != 0 at boot) — it defaults to 0 in system.prop, so something set it; clear it and reboot"
-		return 1
+		xlog "note: hdmi_force_validate is set; the external validates when it carries its own content"
 	fi
 
 	# Mirror queue gate + dispatcher pacing. Both are debug.hwc.* props the
@@ -150,10 +152,13 @@ hdmi_up() {
 			# below is that evidence being collected. The intermediate mode set
 			# is waited for rather than slept through -- res_hdmi carries the
 			# applied mode + 1, so 11 lands as 12.
-			xlog "attempt $try: display 1 absent after the mode set — toggling via res 11"
+			# The intermediate mode must differ from $RES or the toggle sets the
+			# same mode twice and nothing changes. 11 is 1080p60, 2 is 720p60.
+			ALT=11; [ "$RES" = 11 ] && ALT=2
+			xlog "attempt $try: display 1 absent after the mode set — toggling via res $ALT"
 			echo fakecablein:disable > $H
-			$CTL res 11
-			wait_for 3 '[ "$(cat /sys/class/switch/res_hdmi/state 2>/dev/null)" = 12 ]'
+			$CTL res "$ALT"
+			wait_for 3 '[ "$(cat /sys/class/switch/res_hdmi/state 2>/dev/null)" = "$((ALT + 1))" ]'
 			$CTL res "$RES"
 			wait_for 5 'dumpsys SurfaceFlinger 2>/dev/null | grep -q "DisplayDevice{1"'
 		fi
@@ -205,8 +210,7 @@ hdmi_up() {
 	return 1
 }
 
-# Retired: the mirror is kept through fullscreen apps by the xdplus-mirrorpin
-# service holding one layer, which costs the user nothing. This only hands back
+# Retired: the mirror survives a collapsed primary on its own. This only hands back
 # scales an older build zeroed and left in a persist property.
 PROP_ANIM_SAVED=persist.sys.xdplus.anim_saved
 ANIM_KEYS="window_animation_scale transition_animation_scale animator_duration_scale"
