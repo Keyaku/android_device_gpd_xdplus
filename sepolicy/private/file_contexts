@@ -26,7 +26,6 @@
 /system/bin/xdplus_tweaks                                             u:object_r:xdplus_tweaks_exec:s0
 /system/bin/xdplus_wifi_seed                                          u:object_r:xdplus_wifiseed_exec:s0
 /system/bin/xdplus_avcd                                               u:object_r:xdplus_avcd_exec:s0
-/system/bin/xdplus_pinlayer                                           u:object_r:xdplus_pinlayer_exec:s0
 
 # The denial log. Its own type so the recorder can write it under enforcing:
 # /data/misc is system_data_file, which domain.te neverallows a new domain from
