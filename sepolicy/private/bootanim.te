@@ -1,2 +1,5 @@
 # Userspace reboot exported prop is read during boot animation.
 get_prop(bootanim, userspace_reboot_exported_prop);
+
+# /dev/dri itself carries gpu_device; traversing it is needed to reach card0.
+allow bootanim gpu_device:dir search;
