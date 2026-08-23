@@ -16,11 +16,11 @@
 # it is ~5 s ahead of the first hps down-migration. Writing a path that does not
 # exist is a logged no-op, so this is safe if the driver is ever compiled out.
 #
-# NOTE this does not fix the underlying kernel bug — the big cluster's cpufreq
-# policy still fails to come back after a full-cluster offline during boot. It
-# stops the only thing that triggers it. A runtime offline/online cycle of CPU4+5
-# after boot restores the policy correctly, so the re-registration failure is a
-# boot-window race, not a general hotplug defect.
+# NOTE this does not fix the underlying kernel bug, it stops the only thing that
+# triggers it. The teardown is NOT boot-specific: enabling hps at runtime on a
+# settled boot loses cpu4/cpufreq within 10 s just the same. The trigger is a
+# WHOLE-CLUSTER offline — holding one big core online keeps the policy alive —
+# and bringing the cores back online restores it.
 on init
     write /proc/hps/enabled "0"
     write /sys/devices/system/cpu/cpu0/online "1"
