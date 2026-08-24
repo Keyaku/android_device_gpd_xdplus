@@ -17,8 +17,8 @@ allow hal_health_xdplus kmsg_device:chr_file { open write };
 # `present`, `capacity` and `voltage_now` with tcontext=u:object_r:sysfs:s0 --
 # this kernel's power_supply nodes are plain `sysfs`, NOT `sysfs_batteryinfo`,
 # because nothing has ever labelled them (there is no device genfs_contexts).
-# Granting sysfs_batteryinfo alone leaves the HAL reporting a flat battery and
-# "USB powered: false" while charging. The genfs labelling is the better fix and
-# is the next step; until then this reads sysfs.
+# Granting sysfs_batteryinfo alone left the HAL reporting a flat battery and
+# "USB powered: false" while charging. The power_supply parent is labelled in
+# genfs_contexts now; the sysfs rule stays for the nodes outside it.
 r_dir_file(hal_health_xdplus, sysfs_batteryinfo)
 r_dir_file(hal_health_xdplus, sysfs)

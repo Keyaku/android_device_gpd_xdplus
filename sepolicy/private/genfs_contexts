@@ -6,3 +6,8 @@
 # `debugfs` label ("This is too broad" -- system/sepolicy/public/domain.te), so
 # granting xdplus_tweaks access to it fails the build rather than the boot.
 genfscon debugfs /hdmi u:object_r:xdplus_debugfs_hdmi:s0
+
+# This kernel leaves the power_supply nodes as plain `sysfs`, so nothing that is
+# only granted sysfs_batteryinfo -- shell included -- can read capacity or
+# current_now. ac, battery and usb all live under this one parent.
+genfscon sysfs /devices/mediatek,battery_common/power_supply u:object_r:sysfs_batteryinfo:s0
