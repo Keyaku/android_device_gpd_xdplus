@@ -340,6 +340,11 @@ PRODUCT_AAPT_PREF_CONFIG := hdpi
 PRODUCT_PROPERTY_OVERRIDES += \
     init.userspace_reboot.is_supported=false
 
+# MTK hotplug stays off unless asked for. Turning it on is the only route to the
+# SoC's deep idle states, and it is applied after boot_completed only.
+PRODUCT_PROPERTY_OVERRIDES += \
+    persist.sys.xdplus.hps=0
+
 # SELinux default, by build variant. A userdebug build is the maintainer's daily
 # driver and enforces so denials get harvested from real use; a user build ships
 # permissive until the policy is finished.
