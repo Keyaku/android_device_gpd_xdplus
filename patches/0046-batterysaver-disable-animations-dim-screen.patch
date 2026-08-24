@@ -1,0 +1,36 @@
+From c292b2c9e2d95f35c10fd2cfe634df0d414ca027 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 24 Aug 2026 14:28:33 +0100
+Subject: [PATCH] Make battery saver disable animations and dim the screen
+
+Changes:
+- `BatterySaverPolicy`: `DEFAULT_FULL_POLICY` sets `disableAnimation` and `enableAdjustBrightness` to `true`, so the 0.5 brightness factor already declared beside them is actually applied and window animations stop while the mode is on.
+
+Change-Id: Ib00df10d058998dcb40b8d06f6d79966c043f577
+---
+ .../android/server/power/batterysaver/BatterySaverPolicy.java | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/services/core/java/com/android/server/power/batterysaver/BatterySaverPolicy.java b/services/core/java/com/android/server/power/batterysaver/BatterySaverPolicy.java
+index 701197e6..080d0824 100644
+--- a/services/core/java/com/android/server/power/batterysaver/BatterySaverPolicy.java
++++ b/services/core/java/com/android/server/power/batterysaver/BatterySaverPolicy.java
+@@ -145,13 +145,13 @@ public class BatterySaverPolicy extends ContentObserver {
+             true,  /* advertiseIsEnabled */
+             true,  /* deferFullBackup */
+             true,  /* deferKeyValueBackup */
+-            false, /* disableAnimation */
++            true,  /* disableAnimation */
+             true,  /* disableAod */
+             true,  /* disableLaunchBoost */
+             true,  /* disableOptionalSensors */
+             true,  /* disableSoundTrigger */
+             true,  /* disableVibration */
+-            false, /* enableAdjustBrightness */
++            true,  /* enableAdjustBrightness */
+             false, /* enableDataSaver */
+             true,  /* enableFirewall */
+             true, /* enableNightMode */
+-- 
+2.55.0
+

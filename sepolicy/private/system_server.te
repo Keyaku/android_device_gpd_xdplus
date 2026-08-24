@@ -4,3 +4,6 @@ get_prop(system_server, userspace_reboot_config_prop);
 
 # Vendor patch level: read-only config prop, queried once at boot.
 get_prop(system_server, vendor_security_patch_level_prop);
+
+# Battery saver writes scaling_max_freq from config_batterySaverDeviceSpecificConfig.
+allow system_server sysfs_devices_system_cpu:file w_file_perms;

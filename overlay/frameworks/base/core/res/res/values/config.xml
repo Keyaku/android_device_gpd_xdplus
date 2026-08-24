@@ -309,4 +309,8 @@
          from the LOS per-user setting accelerometer_rotation_angles (7 =
          0/90/180; seascape excluded per user preference). -->
     <bool name="config_enableLockScreenRotation">true</bool>
+
+    <!-- Battery saver CPU caps. Only cpufreq-i/cpufreq-n are read from this
+         resource; every other flag comes from the framework policy. -->
+    <string translatable="false" name="config_batterySaverDeviceSpecificConfig">cpufreq-i=0:1300000/4:1404000,cpufreq-n=0:1001000/4:1001000</string>
 </resources>
