@@ -1,0 +1,45 @@
+From aff082a007f8c916d85c09b7c919aa634baf90ac Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 24 Aug 2026 17:16:59 +0100
+Subject: [PATCH] Publish battery-saver state on a system property
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Battery saver is framework-only on this device: nothing below it can observe the mode, so anything the mode wants to do outside the framework has no carrier. A manifest receiver for `ACTION_POWER_SAVE_MODE_CHANGED` is not one — the broadcast does not reach background manifest receivers, which was measured, not assumed.
+
+Changes:
+- `BatterySaverController`: set `sys.xdplus.powersave` alongside the existing file writes, so init triggers can act on the mode.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: I469651c19a8bda9422c55e9754e7e2eec5c9cdec
+---
+ .../server/power/batterysaver/BatterySaverController.java    | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/services/core/java/com/android/server/power/batterysaver/BatterySaverController.java b/services/core/java/com/android/server/power/batterysaver/BatterySaverController.java
+index 2e5c0f46..a419a416 100644
+--- a/services/core/java/com/android/server/power/batterysaver/BatterySaverController.java
++++ b/services/core/java/com/android/server/power/batterysaver/BatterySaverController.java
+@@ -30,6 +30,7 @@ import android.os.Handler;
+ import android.os.Looper;
+ import android.os.Message;
+ import android.os.PowerManager;
++import android.os.SystemProperties;
+ import android.os.PowerManagerInternal;
+ import android.os.PowerManagerInternal.LowPowerModeListener;
+ import android.os.PowerSaveState;
+@@ -479,6 +480,10 @@ public class BatterySaverController implements BatterySaverPolicyListener {
+ 
+         updateBatterySavingStats();
+ 
++        // Battery saver is a framework-only state on this device: nothing below it
++        // can see the mode. Publish it so init can act on it.
++        SystemProperties.set("sys.xdplus.powersave", isEnabled() ? "1" : "0");
++
+         if (ArrayUtils.isEmpty(fileValues)) {
+             mFileUpdater.restoreDefault();
+         } else {
+-- 
+2.55.0
+
