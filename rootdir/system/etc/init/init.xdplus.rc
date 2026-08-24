@@ -16,11 +16,10 @@
 # it is ~5 s ahead of the first hps down-migration. Writing a path that does not
 # exist is a logged no-op, so this is safe if the driver is ever compiled out.
 #
-# NOTE this does not fix the underlying kernel bug, it stops the only thing that
-# triggers it. The teardown is NOT boot-specific: enabling hps at runtime on a
-# settled boot loses cpu4/cpufreq within 10 s just the same. The trigger is a
-# WHOLE-CLUSTER offline — holding one big core online keeps the policy alive —
-# and bringing the cores back online restores it.
+# CORRECTED 2026-08-24: the runtime half of this note was wrong. Enabling hps on a
+# settled boot parks the big cluster and the policy comes back with the cores,
+# measured on kernel #235 and #244 alike. What stays true is the boot-time race,
+# so hps stays off here and is opt-in after boot_completed (see below).
 on init
     write /proc/hps/enabled "0"
     write /sys/devices/system/cpu/cpu0/online "1"
@@ -262,5 +261,20 @@ on property:sys.boot_completed=1
 # registers, and (VINTF unenforced) clients block forever in getService().
 # Seen with configstore (replaced above) and light@2.0 (system_server thread
 # hung on ILight). Kick the known victims once the manager is ready.
+# MTK hotplug, opt-in and only after boot. The early teardown this file's header
+# describes is a boot-time race; enabling hps on a settled boot parks the big
+# cluster cleanly and the policy comes back with the cores.
+# Deep idle (slidle/dpidle) needs one CPU powered, so it is unreachable with hps off.
+on property:persist.sys.xdplus.hps=1 && property:sys.boot_completed=1
+    write /proc/hps/enabled "1"
+
+on property:persist.sys.xdplus.hps=0 && property:sys.boot_completed=1
+    write /proc/hps/enabled "0"
+    write /sys/devices/system/cpu/cpu1/online "1"
+    write /sys/devices/system/cpu/cpu2/online "1"
+    write /sys/devices/system/cpu/cpu3/online "1"
+    write /sys/devices/system/cpu/cpu4/online "1"
+    write /sys/devices/system/cpu/cpu5/online "1"
+
 on property:hwservicemanager.ready=true
     restart light-hal-2-0
