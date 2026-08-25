@@ -1,27 +1,67 @@
 diff --git a/service/java/com/android/server/wifi/ClientModeImpl.java b/service/java/com/android/server/wifi/ClientModeImpl.java
 --- a/service/java/com/android/server/wifi/ClientModeImpl.java
 +++ b/service/java/com/android/server/wifi/ClientModeImpl.java
-@@ -2699,7 +2699,24 @@ public class ClientModeImpl extends StateMachine {
+@@ -2647,7 +2647,11 @@
+             mWifiInfo.setNetworkId(stateChangeResult.networkId);
+             mWifiInfo.setBSSID(stateChangeResult.BSSID);
+             mWifiInfo.setSSID(stateChangeResult.wifiSsid);
+-            if (state == SupplicantState.ASSOCIATED) {
++            // COMPLETED, not ASSOCIATED: the supplicant only publishes the
++            // negotiated PHY mode once the link is up, and this method fills in
++            // WifiInfo's frequency further down, so both reads are stale at
++            // ASSOCIATED and the result is latched for the whole connection.
++            if (state == SupplicantState.COMPLETED) {
+                 updateWifiInfoAfterAssociation();
+             }
+         } else {
+@@ -2693,13 +2697,51 @@
+         return state;
+     }
+ 
++    /**
++     * Frequency of the link being established, or -1 when it is not known yet.
++     *
++     * WifiInfo carries the previous link's frequency (or -1 after a reset) until
++     * the scan cache lookup in handleSupplicantStateChange() or the first RSSI
++     * poll updates it, so fall back to the scan cache for the current BSSID.
++     */
++    private int getCurrentFrequencyMhz() {
++        int frequencyMhz = mWifiInfo.getFrequency();
++        if (frequencyMhz > 0) {
++            return frequencyMhz;
++        }
++        String bssid = mWifiInfo.getBSSID();
++        ScanDetailCache scanDetailCache =
++                mWifiConfigManager.getScanDetailCacheForNetwork(mWifiInfo.getNetworkId());
++        if (bssid == null || scanDetailCache == null) {
++            return -1;
++        }
++        ScanDetail scanDetail = scanDetailCache.getScanDetail(bssid);
++        if (scanDetail == null) {
++            return -1;
++        }
++        return scanDetail.getScanResult().frequency;
++    }
++
+     private void updateWifiInfoAfterAssociation() {
+         WifiNative.ConnectionCapabilities capabilities =
+                 mWifiNative.getConnectionCapabilities(mInterfaceName);
          ThroughputPredictor throughputPredictor = mWifiInjector.getThroughputPredictor();
          int maxTxLinkSpeedMbps = throughputPredictor.predictMaxTxThroughput(capabilities);
          int maxRxLinkSpeedMbps = throughputPredictor.predictMaxRxThroughput(capabilities);
 -        mWifiInfo.setWifiStandard(capabilities.wifiStandard);
 +        int wifiStandard = capabilities.wifiStandard;
 +        if (wifiStandard == ScanResult.WIFI_STANDARD_UNKNOWN) {
-+            // The MT6630 gen2 HAL never reports the negotiated PHY mode, leaving
-+            // WifiInfo standard = UNKNOWN even on a live link. The FULLMAC
-+            // firmware negotiates VHT on 5 GHz (verified: VHT80 MCS9, 433 Mbit/s
-+            // @5805 MHz) while 2.4 GHz links are HT-only, so label by band.
-+            //
-+            // Unconditional: this is a fact about the chip, not a preference.
-+            // It was briefly gated on persist.sys.wifi_standard_11n_fallback and
-+            // exposed as a toggle, which only offered a choice between a correct
-+            // label and a wrong one. The guard stays narrow instead — it fires
-+            // solely when the HAL reported nothing, so a HAL that ever starts
-+            // reporting the real standard silently wins.
-+            wifiStandard = mWifiInfo.getFrequency() > 5000
-+                    ? ScanResult.WIFI_STANDARD_11AC
-+                    : ScanResult.WIFI_STANDARD_11N;
++            // The MT6630 HAL does not always report the negotiated PHY mode.
++            // The FULLMAC firmware negotiates VHT on 5 GHz and HT-only on
++            // 2.4 GHz, so label by band when it reports nothing; a HAL that did
++            // report the real standard wins, hence the narrow guard.
++            int frequencyMhz = getCurrentFrequencyMhz();
++            if (frequencyMhz > 0) {
++                wifiStandard = frequencyMhz > 5000
++                        ? ScanResult.WIFI_STANDARD_11AC
++                        : ScanResult.WIFI_STANDARD_11N;
++            }
 +        }
 +        mWifiInfo.setWifiStandard(wifiStandard);
          mWifiInfo.setMaxSupportedTxLinkSpeedMbps(maxTxLinkSpeedMbps);
