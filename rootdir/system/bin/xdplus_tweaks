@@ -392,7 +392,10 @@ avclog_export() {
 # Guard: the SurfaceFlinger-poking paths must never run before the framework is
 # fully up. init also gates the triggers on sys.boot_completed, but a manual/
 # early invocation must be a no-op too.
-if [ "$CMD" != "hdmi_down" ] && [ "$(getprop sys.boot_completed)" != "1" ]; then
+# ⚠️ selinux is exempt on purpose: it must run BEFORE boot_completed, because
+# Trust samples the mode at PHASE_BOOT_COMPLETED and setenforce needs permissive.
+case "$CMD" in hdmi_down|selinux) _early_ok=1 ;; *) _early_ok=0 ;; esac
+if [ "$_early_ok" != "1" ] && [ "$(getprop sys.boot_completed)" != "1" ]; then
 	xlog "boot not completed — deferring '$CMD'"
 	setprop sys.xdplus.action none
 	exit 0

@@ -107,7 +107,26 @@ on property:sys.xdplus.vkcompile=*
 # ⚠️ A device upgraded from a build that had it keeps a stale /data/vkshim; it
 # is dead weight, not a hazard, and nothing recreates it.
 
-# Re-apply persisted toggles once the framework is up.
+# Apply the SELinux mode as early as the persisted property exists, which is
+# when init loads persist props during late-init. Two reasons it is not left to
+# the boot pass below: the device is permissive until this runs, and Trust
+# samples SELinux at PHASE_BOOT_COMPLETED, before sys.boot_completed is set --
+# so enforcing there meant a permissive boot window and a warning every boot.
+# ⚠️ setenforce is neverallow-ed to every domain, so this only works while the
+# device is still permissive. It must stay ahead of any later enforcement.
+service xdplus-tweaks-selinux /system/bin/xdplus_tweaks selinux
+    class core
+    user root
+    group root system
+    disabled
+    oneshot
+
+on property:persist.sys.xdplus.selinux_enforce=1
+    start xdplus-tweaks-selinux
+
+# Re-apply persisted toggles once the framework is up. selinux_apply stays in
+# this pass as an idempotent backstop for the case where the property is set
+# after boot.
 service xdplus-tweaks-boot /system/bin/xdplus_tweaks boot
     class main
     user root
