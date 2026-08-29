@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Quick Settings tile lists for the GPD XD+.
+
+     The device has no modem and no SIM slot, so the "cell" (Mobile data) tile
+     has nothing to control. It is dropped from the default layout and from the
+     stock list, so it cannot be added back from the tile editor either.
+-->
+<resources>
+    <!-- Default layout, stock minus "cell". -->
+    <string name="quick_settings_tiles_default" translatable="false">
+        wifi,bt,dnd,flashlight,rotation,battery,airplane,cast,screenrecord
+    </string>
+
+    <!-- Tiles offered by the tile editor, stock minus "cell". -->
+    <string name="quick_settings_tiles_stock" translatable="false">
+        wifi,battery,dnd,flashlight,rotation,bt,airplane,nfc,location,hotspot,inversion,saver,dark,work,cast,night,screenrecord,reverse,ambient_display,aod,caffeine,heads_up,livedisplay,powershare,profiles,reading_mode,sync,usb_tether,volume_panel,vpn,anti_flicker
+    </string>
+</resources>
