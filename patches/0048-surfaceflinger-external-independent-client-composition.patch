@@ -1,0 +1,48 @@
+From 4e92af009a0f6e5c1d4e1325873b94a3ed8c5a29 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Wed, 26 Aug 2026 12:42:18 +0100
+Subject: [PATCH] SurfaceFlinger: force client composition for an independent
+ external display
+
+The 8.1 MTK composer demotes external-display layers to client composition
+but does not report the change to SurfaceFlinger, so SF never renders a
+client target and the external session starves. Force SF to client-compose
+when the external is showing its own layer stack rather than mirroring the
+primary. This is part of the HDMI Presentation work; the blob-side half is
+still being iterated.
+
+Changes:
+- CompositionEngine/src/Display.cpp: after deriveCompositionType, override an independent external to client composition
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Change-Id: Ieeb9029131f739f9d7d28924869e11bcd961748c
+---
+ .../surfaceflinger/CompositionEngine/src/Display.cpp | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/services/surfaceflinger/CompositionEngine/src/Display.cpp b/services/surfaceflinger/CompositionEngine/src/Display.cpp
+index 3b21ab0b21..da6dbaa830 100644
+--- a/services/surfaceflinger/CompositionEngine/src/Display.cpp
++++ b/services/surfaceflinger/CompositionEngine/src/Display.cpp
+@@ -273,6 +273,18 @@ void Display::chooseCompositionStrategy() {
+         state.usesClientComposition = false;
+         state.usesDeviceComposition = true;
+     }
++
++    // The 8.1 MTK composer demotes an external display's own layers to client
++    // composition but does not report the change back to SurfaceFlinger, so SF
++    // never renders a client target and the external session starves. Force SF
++    // to client-compose an external display that is not mirroring the primary.
++    if (!isExternalMirrorStack() && mId && !state.usesClientComposition) {
++        const auto& hwc = getCompositionEngine().getHwComposer();
++        if (hwc.getDisplayConnectionType(*mId) == android::DisplayConnectionType::External) {
++            state.usesClientComposition = true;
++            state.usesDeviceComposition = false;
++        }
++    }
+ }
+ 
+ bool Display::isExternalMirrorStack() const {
+-- 
+2.55.0
+
