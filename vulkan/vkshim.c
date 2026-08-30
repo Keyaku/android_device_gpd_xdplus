@@ -645,13 +645,13 @@ static int prop_on(const char *name, int *cache);   // defined with the other pr
 //
 // ⚠️ This used to pthread_create + pthread_join a fresh 64 MB-stack thread for
 // every vkCreate*Pipelines call. That is fine for the compile storm it was
-// written for (§134's USC recursion) and ruinous for what apps actually do:
-// SwanStation calls vkCreateGraphicsPipelines from its render loop, measured
-// at ~667 calls/second — about 28 per frame at 24 fps — so the shim was
-// mapping, faulting in, unmapping and tearing down a 64 MB stack 667 times a
-// second, for calls that are warm cache hits costing microseconds of real
-// work. GL pays none of this, which is why Vulkan was slower here regardless
-// of GPU load.
+// written for (deep USC recursion in shader compiles) and ruinous for what
+// apps actually do: SwanStation calls vkCreateGraphicsPipelines from its
+// render loop, measured at ~667 calls/second — about 28 per frame at 24 fps —
+// so the shim was mapping, faulting in, unmapping and tearing down a 64 MB
+// stack 667 times a second, for calls that are warm cache hits costing
+// microseconds of real work. GL pays none of this, which is why Vulkan was
+// slower here regardless of GPU load.
 //
 // One worker per calling thread keeps the stack guarantee with none of the
 // churn, and keeps concurrency: two app threads compiling at once still get
