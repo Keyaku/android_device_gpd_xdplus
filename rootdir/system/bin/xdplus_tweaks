@@ -125,15 +125,15 @@ hdmi_up() {
 	# Both of these used to be blind sleeps for hardware settling, because
 	# /d/hdmi_pwrpin's powerenable/clockenable are a trap: they flip when the
 	# call returns, so they prove the call happened, not that the hardware
-	# settled. Each now waits on something the driver only produces once the
+	# settled. power 1 now waits on something the driver only produces once the
 	# step really finished, with the old sleep kept as the timeout:
-	#  - enable runs hdmi_drv_init(), whose last act is to create the
-	#    hdmi_rdma_config_kthread kernel thread (comm truncated to 15 chars).
 	#  - power 1 powers the transmitter; the driver then detects the sink and
 	#    reads its EDID on the powered path, and publishes ready=1 only after
 	#    that, which is the point a mode set will stick. A kernel too old to
 	#    publish ready= simply times out into the old 3 s wait.
-	$CTL enable;  wait_for 2 'pgrep hdmi_rdma_confi >/dev/null 2>&1'
+	# enable needs no wait: the ioctl calls hdmi_drv_init() inline, so the
+	# hdmi_rdma_config_kthread it creates exists by the time the call returns.
+	$CTL enable
 	$CTL power 1; wait_for 3 'grep -q "ready=1" /d/hdmi_pwrpin 2>/dev/null'
 	$CTL res "$RES"
 	wait_for 6 'dumpsys SurfaceFlinger 2>/dev/null | grep -q "DisplayDevice{1"'
