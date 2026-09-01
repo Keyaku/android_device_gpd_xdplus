@@ -1,0 +1,37 @@
+// The reconstructed libdpframework: MediaTek's MDP blit engine behind
+// DpBlitStream/DpAsyncBlitStream, rebuilt from the shipping blob. The
+// consumers -- the composer, the OMX codecs, libJpgDecPipe, libgpu_aux,
+// libClearMotionFW -- stay blobs and link this by soname, so the module keeps
+// the blob's name and ships on both ABIs.
+//
+// Deliberately NOT in PRODUCT_PACKAGES, for the same reason as hwcshim:
+// /vendor is the frozen partition, and anything soong stages under
+// out/.../system/vendor is shadowed at runtime by the partition mount. Build
+// it with `mka libdpframework.reconstruct` and let build_vendor_image.sh's
+// BAKED_MODULES carry the result into the image.
+//
+// src/ is a copy. The canonical tree is tools/dpframework_reconstruct/src,
+// which carries the decompilation and the five gates; sync_dpframework.sh
+// refreshes this copy and refuses to run backwards.
+cc_library_shared {
+	name: "libdpframework.reconstruct",
+	stem: "libdpframework",
+	proprietary: true,
+	compile_multilib: "both",
+
+	srcs: ["src/*.cpp"],
+	local_include_dirs: ["src/include"],
+
+	shared_libs: [
+		"libcutils",
+		"liblog",
+		"libion",
+		"libsync",
+	],
+
+	cflags: [
+		"-Wall",
+		"-Werror",
+		"-Wno-unused-parameter",
+	],
+}
