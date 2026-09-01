@@ -28,6 +28,9 @@ allow xdplus_hdmid system_file:file rx_file_perms;
 # The dispatcher is a shell script: the interpreter exec is checked here, before
 # the transition to xdplus_tweaks.
 allow xdplus_hdmid shell_exec:file rx_file_perms;
+# For a run that stays in this domain because the transition did not fire: the
+# shell's PATH walk otherwise reaches the vendor toybox, which must stay denied.
+allow xdplus_hdmid toolbox_exec:file rx_file_perms;
 
 # It records its own progress in sys.xdplus.*.
 set_prop(xdplus_hdmid, xdplus_prop)
