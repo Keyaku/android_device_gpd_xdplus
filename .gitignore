@@ -7,3 +7,9 @@ __pycache__/
 # OTA CA + server private keys (scripts/ota_ca_setup.sh). Secret — never track.
 # The hashed CA PUBLIC cert (ota/cacerts/*.0) IS tracked; it goes in the image.
 ota/private/
+
+# The reconstructed libdpframework's sources are a copy. tools/dpframework_reconstruct
+# in the workspace is canonical and carries the decompilation and the gates;
+# sync_dpframework.sh refreshes this copy and writes the manifest it checks.
+dpframework/src/
+dpframework/.sync-manifest
