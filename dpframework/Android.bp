@@ -27,6 +27,10 @@ cc_library_shared {
 		"liblog",
 		"libion",
 		"libsync",
+		// Imported blobs, declared in vendor/gpd/xdplus/Android.bp: MediaTek's
+		// legacy ion entry points and the MTKM4UDrv methods.
+		"libion_mtk",
+		"libm4u",
 	],
 
 	cflags: [
