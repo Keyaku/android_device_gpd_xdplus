@@ -211,6 +211,16 @@ hdmi_up() {
 PROP_ANIM_SAVED=persist.sys.xdplus.anim_saved
 ANIM_KEYS="window_animation_scale transition_animation_scale animator_duration_scale"
 
+# The hall sensor reports SW_LID, and PhoneWindowManager only sleeps on a lid
+# close when LID_BEHAVIOR is SLEEP; its default of NONE calls userActivity(),
+# which would hold the device awake with the lid shut.
+lid_behavior_apply() {
+	cur=$(settings get global lid_behavior 2>/dev/null)
+	[ "$cur" = "1" ] && return 0
+	settings put global lid_behavior 1 2>/dev/null
+	xlog "lid_behavior set to sleep (was ${cur:-unset})"
+}
+
 anim_zero_restore() {
 	saved=$(getprop $PROP_ANIM_SAVED)
 	[ -n "$saved" ] || return 0
@@ -410,7 +420,7 @@ case "$CMD" in
 	# A reboot while the mirror was up leaves the saved scales stranded in a
 	# persist property, so the user would come back to a device with no
 	# animations and nothing on screen explaining why. Hand them back at boot.
-	boot)      anim_zero_restore; prune_retired_props; vkcache_prune; selinux_apply ;;
+	boot)      anim_zero_restore; prune_retired_props; vkcache_prune; lid_behavior_apply; selinux_apply ;;
 	vkcache_prune) vkcache_prune ;;
 	vkcache_clear) vkcache_clear ;;
 	selinux)   selinux_apply ;;
