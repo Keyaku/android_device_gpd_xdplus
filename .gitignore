@@ -13,3 +13,8 @@ ota/private/
 # sync_dpframework.sh refreshes this copy and writes the manifest it checks.
 dpframework/src/
 dpframework/.sync-manifest
+
+# Same for the reconstructed libgralloc_extra: tools/gralloc_extra_reconstruct
+# is canonical, sync_gralloc_extra.sh refreshes this copy.
+gralloc_extra/src/
+gralloc_extra/.sync-manifest
