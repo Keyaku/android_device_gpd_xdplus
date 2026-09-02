@@ -21,6 +21,9 @@
 # measured on kernel #235 and #244 alike. What stays true is the boot-time race,
 # so hps stays off here and is opt-in after boot_completed (see below).
 on init
+    # The kernel fw_path has no vendor dir, so rgx.fw.signed misses its direct
+    # load and the ueventd fallback's uevent aborts every suspend attempt.
+    write /sys/module/firmware_class/parameters/path /system/vendor/firmware
     write /proc/hps/enabled "0"
     write /sys/devices/system/cpu/cpu0/online "1"
     write /sys/devices/system/cpu/cpu1/online "1"

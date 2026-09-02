@@ -283,6 +283,10 @@
     <!-- enable doze powersaving mode -->
     <bool name="config_enableAutoPowerModes">true</bool>
 
+    <!-- No SIGNIFICANT_MOTION sensor on this board, and DeviceIdleController
+         schedules no idle alarms at all while it still expects one. -->
+    <bool name="config_autoPowerModeUseMotionSensor">false</bool>
+
     <!-- Performance profiles -->
 	<!--
     <string name="config_perf_profile_prop">sys.perf.profile</string>
