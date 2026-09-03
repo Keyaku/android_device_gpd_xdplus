@@ -1,0 +1,116 @@
+From 8f78b3dd400db0d1cf00cd3e91ae8991437fcb18 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 10:16:34 +0100
+Subject: [PATCH] Reach deep Doze on the quick-doze delay while the lid is shut
+
+A closed lid states a longer absence than an idle timeout does, so the stock inactivity chain into deep Doze is slower than the user's own signal warrants. Quick doze already exists for exactly this and is exempt from the motion-sensor guard that otherwise parks this device at INACTIVE, so it is the right mechanism and needs no new state.
+
+Battery saver was the only source of the flag, so the lid has to be tracked beside it rather than through it: sharing one boolean would let opening the lid cancel quick doze that battery saver still wants.
+
+Changes:
+- Track battery saver and lid requests separately in `DeviceIdleController` and activate quick doze while either asks for it
+- Expose `setQuickDozeEnabled` on `DeviceIdleInternal` for non-battery-saver callers
+- Drive it from `PhoneWindowManager.applyLidSwitchState`, which is the single funnel for both real lid transitions and the boot-time state
+
+Change-Id: Ib368dc14461edcc3ea735bf338a9e859c364d179
+---
+ .../android/server/DeviceIdleInternal.java    |  7 ++++++
+ .../android/server/DeviceIdleController.java  | 22 +++++++++++++++----
+ .../server/policy/PhoneWindowManager.java     |  7 ++++++
+ 3 files changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/apex/jobscheduler/framework/java/com/android/server/DeviceIdleInternal.java b/apex/jobscheduler/framework/java/com/android/server/DeviceIdleInternal.java
+index 6475f570..1ca0274c 100644
+--- a/apex/jobscheduler/framework/java/com/android/server/DeviceIdleInternal.java
++++ b/apex/jobscheduler/framework/java/com/android/server/DeviceIdleInternal.java
+@@ -50,6 +50,13 @@ public interface DeviceIdleInternal {
+ 
+     int[] getPowerSaveTempWhitelistAppIds();
+ 
++    /**
++     * Enables or disables quick doze from a source other than battery saver, such as the lid
++     * being closed. Battery saver's own request is tracked separately; deep Doze stays armed
++     * while either source asks for it.
++     */
++    void setQuickDozeEnabled(boolean enabled);
++
+     /**
+      * Listener to be notified when DeviceIdleController determines that the device has moved or is
+      * stationary.
+diff --git a/apex/jobscheduler/service/java/com/android/server/DeviceIdleController.java b/apex/jobscheduler/service/java/com/android/server/DeviceIdleController.java
+index ac58f3d6..56eafc2e 100644
+--- a/apex/jobscheduler/service/java/com/android/server/DeviceIdleController.java
++++ b/apex/jobscheduler/service/java/com/android/server/DeviceIdleController.java
+@@ -292,6 +292,10 @@ public class DeviceIdleController extends SystemService
+     private boolean mDeepEnabled;
+     private boolean mQuickDozeActivated;
+     private boolean mQuickDozeActivatedWhileIdling;
++    /** Quick doze requested by battery saver. */
++    private boolean mQuickDozeFromSaver;
++    /** Quick doze requested by the lid being closed. */
++    private boolean mQuickDozeFromLid;
+     private boolean mForceIdle;
+     private boolean mNetworkConnected;
+     private boolean mScreenOn;
+@@ -1773,6 +1777,14 @@ public class DeviceIdleController extends SystemService
+             exitIdleInternal(reason);
+         }
+ 
++        @Override
++        public void setQuickDozeEnabled(boolean enabled) {
++            synchronized (DeviceIdleController.this) {
++                mQuickDozeFromLid = enabled;
++                updateQuickDozeFlagLocked(mQuickDozeFromSaver || mQuickDozeFromLid);
++            }
++        }
++
+         // duration in milliseconds
+         @Override
+         public void addPowerSaveTempWhitelistApp(int callingUid, String packageName,
+@@ -2124,12 +2136,14 @@ public class DeviceIdleController extends SystemService
+                 mLocalPowerManager.registerLowPowerModeObserver(ServiceType.QUICK_DOZE,
+                         state -> {
+                             synchronized (DeviceIdleController.this) {
+-                                updateQuickDozeFlagLocked(state.batterySaverEnabled);
++                                mQuickDozeFromSaver = state.batterySaverEnabled;
++                                updateQuickDozeFlagLocked(
++                                        mQuickDozeFromSaver || mQuickDozeFromLid);
+                             }
+                         });
+-                updateQuickDozeFlagLocked(
+-                        mLocalPowerManager.getLowPowerState(
+-                                ServiceType.QUICK_DOZE).batterySaverEnabled);
++                mQuickDozeFromSaver = mLocalPowerManager.getLowPowerState(
++                        ServiceType.QUICK_DOZE).batterySaverEnabled;
++                updateQuickDozeFlagLocked(mQuickDozeFromSaver || mQuickDozeFromLid);
+ 
+                 mLocalActivityTaskManager.registerScreenObserver(mScreenObserver);
+ 
+diff --git a/services/core/java/com/android/server/policy/PhoneWindowManager.java b/services/core/java/com/android/server/policy/PhoneWindowManager.java
+index 28724e2e..0728ad31 100644
+--- a/services/core/java/com/android/server/policy/PhoneWindowManager.java
++++ b/services/core/java/com/android/server/policy/PhoneWindowManager.java
+@@ -211,6 +211,7 @@ import com.android.internal.util.ArrayUtils;
+ import com.android.server.ExtconStateObserver;
+ import com.android.server.ExtconUEventObserver;
+ import com.android.server.GestureLauncherService;
++import com.android.server.DeviceIdleInternal;
+ import com.android.server.LocalServices;
+ import com.android.server.SystemServiceManager;
+ import com.android.server.inputmethod.InputMethodManagerInternal;
+@@ -5822,6 +5823,12 @@ public class PhoneWindowManager implements WindowManagerPolicy {
+         mPowerManager.setKeyboardVisibility(isBuiltInKeyboardVisible());
+ 
+         final int lidState = mDefaultDisplayPolicy.getLidState();
++        // A closed lid means a longer absence than an idle timeout does, so reach deep Doze
++        // on the quick-doze delay instead of the full inactivity chain.
++        final DeviceIdleInternal deviceIdle = LocalServices.getService(DeviceIdleInternal.class);
++        if (deviceIdle != null) {
++            deviceIdle.setQuickDozeEnabled(lidState == LID_CLOSED);
++        }
+         if (mLidControlsDisplayFold && mDisplayFoldController != null) {
+             mDisplayFoldController.requestDeviceFolded(lidState == LID_CLOSED);
+         } else if (lidState == LID_CLOSED) {
+-- 
+2.55.0
+
