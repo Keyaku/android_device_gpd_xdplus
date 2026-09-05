@@ -1,0 +1,27 @@
+// dpblit_test: one deterministic MDP blit driven straight through
+// DpBlitStream, so the command block can be captured under the stock
+// libdpframework and under the reconstruction with identical input.
+//
+// Diagnostic only, never shipped and not in PRODUCT_PACKAGES. It links the
+// reconstruction by soname, so whichever libdpframework.so is installed at
+// runtime is the one under test. Run it under su -- the shell domain cannot
+// reach /dev/mtk_cmdq.
+//
+// The canonical source is tools/dpblit_test/dpblit_test.c; this is a copy.
+cc_binary {
+	name: "dpblit_test",
+	compile_multilib: "32",
+
+	srcs: ["dpblit_test.c"],
+	shared_libs: [
+		"libdpframework.reconstruct",
+		"libion",
+		"libion_mtk",
+		"liblog",
+	],
+
+	cflags: [
+		"-Wall",
+		"-Werror",
+	],
+}

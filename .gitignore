@@ -18,3 +18,9 @@ dpframework/.sync-manifest
 # is canonical, sync_gralloc_extra.sh refreshes this copy.
 gralloc_extra/src/
 gralloc_extra/.sync-manifest
+
+# The two blit diagnostics are the same arrangement: tools/cmdq_shim and
+# tools/dpblit_test in the workspace are canonical, and these are copies soong
+# can see. Neither module is in PRODUCT_PACKAGES.
+cmdqshim/cmdq_shim.c
+dpblittest/dpblit_test.c
