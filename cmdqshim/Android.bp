@@ -10,7 +10,7 @@
 // The canonical source is tools/cmdq_shim/cmdq_shim.c; this is a copy.
 cc_library_shared {
 	name: "libcmdqshim",
-	compile_multilib: "32",
+	compile_multilib: "both",
 
 	srcs: ["cmdq_shim.c"],
 	shared_libs: ["liblog"],
