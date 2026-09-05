@@ -1,0 +1,22 @@
+// libcmdqshim: an LD_PRELOAD ioctl interposer that dumps every CMDQ command
+// block a process submits. Diagnostic only -- it exists to capture what the
+// stock libdpframework builds so the reconstruction's block can be diffed
+// against it.
+//
+// Deliberately NOT in PRODUCT_PACKAGES and never shipped in an image. Build
+// with `mka libcmdqshim` and push it by hand; it is loaded through init's
+// wrapper property and must be readable by the wrapped process.
+//
+// The canonical source is tools/cmdq_shim/cmdq_shim.c; this is a copy.
+cc_library_shared {
+	name: "libcmdqshim",
+	compile_multilib: "32",
+
+	srcs: ["cmdq_shim.c"],
+	shared_libs: ["liblog"],
+
+	cflags: [
+		"-Wall",
+		"-Werror",
+	],
+}
