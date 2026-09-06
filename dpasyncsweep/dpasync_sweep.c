@@ -377,6 +377,8 @@ static void run_query(void) {
 	}
 }
 
+static void dump_dst(const char *kase, int port, const void *va, unsigned size);
+
 static void run_case(int ionFd, const struct Case *k) {
 	struct Planes sp = planes_for(k->sfmt, k->sw, k->sh);
 	const unsigned srcSize = total_of(&sp);
@@ -532,6 +534,7 @@ static void run_case(int ionFd, const struct Case *k) {
 			else
 				printf(" P%d:%d %08x %08x %08x u=%u/%u |",
 				       p, dp[p].n, sums[0], sums[1], sums[2], untouched, dstSize[p]);
+			dump_dst(k->name, p, dstVA[p][r], dstSize[p]);
 		}
 	}
 	printf("\n");
@@ -553,6 +556,20 @@ static void run_case(int ionFd, const struct Case *k) {
 
 // Every open descriptor with its target, so a leak can be named rather than
 // inferred from a climbing fence number. argv[6] opts in.
+// Set from argv[7]; the tag is appended to each dump's name so a stock run and
+// a reconstruction run land in different files.
+static const char *g_dstDump = NULL;
+
+static void dump_dst(const char *kase, int port, const void *va, unsigned size) {
+	if (!g_dstDump) return;
+	char path[192];
+	snprintf(path, sizeof(path), "/data/local/tmp/dst_%s_p%d.%s.bin", kase, port, g_dstDump);
+	FILE *f = fopen(path, "wb");
+	if (!f) return;
+	fwrite(va, 1, size, f);
+	fclose(f);
+}
+
 static void dump_fds(const char *tag) {
 	DIR *d = opendir("/proc/self/fd");
 	if (!d) return;
@@ -583,6 +600,9 @@ int main(int argc, char **argv) {
 	// the display and cost a reboot.
 	const int doWedging = (argc > 5) ? atoi(argv[5]) : 0;
 	const int doFdDump = (argc > 6) ? atoi(argv[6]) : 0;
+	// argv[7]: write each destination to /data/local/tmp/dst_<case>_p<port>.bin
+	// so the two arms can be diffed byte for byte instead of by checksum.
+	g_dstDump = (argc > 7) ? argv[7] : NULL;
 
 	int ionFd = mt_ion_open("dpasync_sweep");
 	if (ionFd < 0) { fprintf(stderr, "mt_ion_open failed\n"); return 1; }
