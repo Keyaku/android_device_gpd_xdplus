@@ -165,6 +165,10 @@ struct Case {
 	// path composer under stock. Skipped unless argv[4] asks for them, because
 	// a fault in dead code must not stop the cases that matter.
 	int unreachable;
+	// 1 when the case is known to HANG and take the display's CMDQ thread with
+	// it. ⚠️⚠️ A wedged CMDQ freezes the panel at the kernel level: VSYNC times
+	// out on primary_disp and only a reboot clears it. Needs its own opt-in.
+	int wedges;
 };
 
 // Every case is something the composer can ask for and dpblit_sweep cannot
@@ -174,111 +178,111 @@ struct Case {
 static const struct Case cases[] = {
 	// -- single port, geometries already green on the sync path --------------
 	{ "a_baseline",   USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
 	{ "a_down2x",     USER_PRIMARY, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
 	{ "a_rot90",      USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 0 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0 },
 	{ "a_rot270",     USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 0 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 0, 0 },
 	{ "a_to_rgb565",  USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
 	{ "a_rgba_rgba",  USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
 	// -- setSrcCrop, which only exists on this class -------------------------
 	{ "a_crop_centre", USER_PRIMARY, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 0, 0 },
 	{ "a_crop_scale",  USER_PRIMARY, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 854, 480, DP_COLOR_YV12, ROT_0, 100,100,800,400 } }, 0, 0, 0 },
+	  { { 854, 480, DP_COLOR_YV12, ROT_0, 100,100,800,400 } }, 0, 0, 0, 0 },
 	// -- setUser: the mirror's own scenario ---------------------------------
 	{ "a_user5",      USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
 	{ "a_user5_down", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
 	// -- the fan-out. This is the mirror's shape: one source, two sinks at
 	//    different sizes, and on the device one of them is the panel and the
 	//    other the HDMI encoder.
 	{ "a_two_same",   USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_two_sizes",  USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 1280, 720, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_two_formats", USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_two_rots",   USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1 },
+	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_two_crops",  USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,640,360 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1, 0 },
 	{ "a_three_port", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 3,
 	  { { 1280, 720, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
 	    { 640, 360, DP_COLOR_NV12, ROT_0, 0,0,0,0 },
-	    { 320, 180, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	    { 320, 180, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_four_port",  USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 4,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
 	    { 320, 180, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
 	    { 640, 360, DP_COLOR_NV21, ROT_0, 0,0,0,0 },
-	    { 180, 320, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1 },
+	    { 180, 320, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1, 0 },
 	// -- the lifecycle corners ----------------------------------------------
 	{ "a_pq_sc1",     USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 1, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 1, 0, 0, 0 },
 	{ "a_pq_sc2",     USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 2, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 2, 0, 0, 0 },
 	{ "a_cancel",     USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 1, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 1, 0, 0 },
 	// -- the other scenarios, and the multi-thread path with them ------------
 	{ "a_sc2",        USER_SC2, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_sc2_down",   USER_SC2, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_sc2_rot90",  USER_SC2, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_mt",         USER_MULTI, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1 },
 	{ "a_mt_down",    USER_MULTI, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1 },
 	{ "a_mt_rot90",   USER_MULTI, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 1 },
 	{ "a_mt_crop",    USER_MULTI, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 1 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 1, 1 },
 	{ "a_mt_rgb565",  USER_MULTI, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1 },
 	{ "a_mt_two",     USER_MULTI, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1 },
 	// -- fan-out shapes that split the output engines differently. The path
 	//    composer refuses two plain targets; a rotated target takes a WROT and
 	//    a plain one can take the WDMA, so these are the shapes that could
 	//    legally coexist.
 	{ "a_two_r0_p1",  USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_two_bothrot",USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 },
-	    { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1 },
+	    { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_two_1to1",   USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_NV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_NV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_two_sc2",    USER_SC2, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	// Scenario 2 is the only one whose fan-out reaches the tile calculator at
 	// all, so the shapes that could split the output engines are tried there.
 	{ "a_two_sc2_rot",USER_SC2, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1 },
+	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_two_sc2_sz", USER_SC2, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 1280, 720, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_two_sc2_fmt",USER_SC2, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
 	{ "a_two_sc2_crop",USER_SC2, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,640,360 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1, 0 },
 };
 
 // queryHWSupport answers before any buffer exists, and a wrong false silently
@@ -436,6 +440,9 @@ int main(int argc, char **argv) {
 	const int count = (argc > 2) ? atoi(argv[2]) : -1;
 	const int doQuery = (argc > 3) ? atoi(argv[3]) : 1;
 	const int doUnreachable = (argc > 4) ? atoi(argv[4]) : 0;
+	// Separate opt-in from doUnreachable: these do not merely fail, they wedge
+	// the display and cost a reboot.
+	const int doWedging = (argc > 5) ? atoi(argv[5]) : 0;
 
 	int ionFd = mt_ion_open("dpasync_sweep");
 	if (ionFd < 0) { fprintf(stderr, "mt_ion_open failed\n"); return 1; }
@@ -443,6 +450,10 @@ int main(int argc, char **argv) {
 	int ncases = (int)(sizeof(cases) / sizeof(cases[0]));
 	if (count >= 0 && from + count < ncases) ncases = from + count;
 	for (int c = from; c < ncases; c++) {
+		if (cases[c].wedges && !doWedging) {
+			printf("%-15s SKIPPED (hangs and wedges CMDQ — reboot to clear)\n", cases[c].name);
+			continue;
+		}
 		if (cases[c].unreachable && !doUnreachable) {
 			printf("%-15s SKIPPED (no consumer reaches this)\n", cases[c].name);
 			continue;
