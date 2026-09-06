@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #define PACK(VIDEO, PLANE, COPLANE, HF, VF, BITS, GROUP, SWAP, UID) \
 	(((VIDEO) << 27) | ((PLANE) << 24) | ((COPLANE) << 22) | ((HF) << 20) | \
@@ -550,6 +551,29 @@ static void run_case(int ionFd, const struct Case *k) {
 	}
 }
 
+// Every open descriptor with its target, so a leak can be named rather than
+// inferred from a climbing fence number. argv[6] opts in.
+static void dump_fds(const char *tag) {
+	DIR *d = opendir("/proc/self/fd");
+	if (!d) return;
+	int n = 0;
+	struct dirent *e;
+	printf("FDDUMP %s:", tag);
+	while ((e = readdir(d)) != NULL) {
+		if (e->d_name[0] == '.') continue;
+		char path[64], tgt[256];
+		snprintf(path, sizeof(path), "/proc/self/fd/%s", e->d_name);
+		ssize_t k = readlink(path, tgt, sizeof(tgt) - 1);
+		if (k < 0) continue;
+		tgt[k] = '\0';
+		printf(" %s=%s", e->d_name, tgt);
+		n++;
+	}
+	printf(" (total %d)\n", n);
+	fflush(stdout);
+	closedir(d);
+}
+
 int main(int argc, char **argv) {
 	const int from = (argc > 1) ? atoi(argv[1]) : 0;
 	const int count = (argc > 2) ? atoi(argv[2]) : -1;
@@ -558,6 +582,7 @@ int main(int argc, char **argv) {
 	// Separate opt-in from doUnreachable: these do not merely fail, they wedge
 	// the display and cost a reboot.
 	const int doWedging = (argc > 5) ? atoi(argv[5]) : 0;
+	const int doFdDump = (argc > 6) ? atoi(argv[6]) : 0;
 
 	int ionFd = mt_ion_open("dpasync_sweep");
 	if (ionFd < 0) { fprintf(stderr, "mt_ion_open failed\n"); return 1; }
@@ -574,6 +599,7 @@ int main(int argc, char **argv) {
 			continue;
 		}
 		run_case(ionFd, &cases[c]);
+		if (doFdDump) dump_fds(cases[c].name);
 	}
 
 	if (doQuery)
