@@ -81,6 +81,11 @@ extern int  _ZN17DpAsyncBlitStream12setSrcBufferEiPjji(void *, int, uint32_t *, 
 extern int  _ZN17DpAsyncBlitStream12setSrcConfigEiiii13DP_COLOR_ENUM15DP_PROFILE_ENUM17DpInterlaceFormat8DpSecureb(
 	void *, int32_t, int32_t, int32_t, int32_t, uint32_t, int32_t, int32_t, int32_t, char);
 extern int  _ZN17DpAsyncBlitStream12setDstBufferEiiPjji(void *, int32_t, int, uint32_t *, uint32_t, int32_t);
+// The secure overloads. BliterNode takes these instead of the fd forms
+// whenever the source usage is protected or the port carries a dst handle, so
+// they sit on the mirror's own path and no harness has ever driven them.
+extern int  _ZN17DpAsyncBlitStream12setSrcBufferEPPvPjji(void *, void **, uint32_t *, uint32_t, int32_t);
+extern int  _ZN17DpAsyncBlitStream12setDstBufferEiPPvPjji(void *, int32_t, void **, uint32_t *, uint32_t, int32_t);
 extern int  _ZN17DpAsyncBlitStream12setDstConfigEiiiii13DP_COLOR_ENUM15DP_PROFILE_ENUM17DpInterlaceFormatP6DpRect8DpSecureb(
 	void *, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t, int32_t, int32_t,
 	struct DpRect *, int32_t, char);
@@ -102,6 +107,10 @@ extern char _ZN12DpBlitStream14queryHWSupportEjjjji13DP_COLOR_ENUMS0_(
 // sizeof(DpAsyncBlitStream) is 0x940 on lib64 and 0x88c on lib32; one buffer
 // covers both with room to spare, and the constructor writes what it needs.
 #define OBJ_BYTES 0x1000
+
+// The composer's mirror queue is three deep; four leaves room to ask whether
+// the depth itself matters without another rebuild.
+#define DST_RING_MAX 4
 
 struct Planes { int n; unsigned size[3]; int yPitch, uvPitch; };
 
@@ -131,12 +140,13 @@ static unsigned total_of(const struct Planes *p) {
 	return t;
 }
 
-static int alloc_ion(int ionFd, unsigned size, int *shareFd, void **va) {
+static int alloc_ion(int ionFd, unsigned size, int *shareFd, void **va, unsigned *outHandle) {
 	unsigned handle = 0;
 	if (ion_alloc_mm(ionFd, size, 0x40, 3, &handle) != 0) return -1;
 	if (ion_share(ionFd, handle, shareFd) != 0) return -1;
 	*va = ion_mmap(ionFd, NULL, size, 3, 1, *shareFd, NULL);
 	if (*va == NULL || *va == (void *)-1) return -1;
+	if (outHandle != NULL) *outHandle = handle;
 	return 0;
 }
 
@@ -159,7 +169,9 @@ struct Case {
 	struct Port port[4];
 	int pqScenario;   // 0 = do not call setPQParameter at all
 	int cancelExtra;  // create and cancel a second job around this one
-	// 1 when no consumer on this device can produce this configuration. The
+	// 1 when no consumer on this device can produce this configuration, or
+	// when the harness cannot honestly produce it (the secure cases hand the
+	// MDP a protected descriptor for an ordinary buffer). The
 	// 64-bit composer is the only caller of setUser and passes 0 or 5, so
 	// scenarios 2 and 3 are dead code; the fan-out shapes are refused by the
 	// path composer under stock. Skipped unless argv[4] asks for them, because
@@ -176,6 +188,16 @@ struct Case {
 	// the queues. 0 means the plain single-shot behaviour.
 	int frames;
 	int extraJobsPerFrame;
+	// Destination buffers cycled per port, one per frame. The physical mirror
+	// draws into a DisplayBufferQueue buffer fetched fresh every frame, so a
+	// harness holding one buffer for every frame cannot see what the rotation
+	// does to the destination pool. 0 or 1 keeps the single-buffer behaviour.
+	int dstRing;
+	// DpSecure for the source and every destination port. Non-zero also
+	// switches both setters to their handle overloads, which is what
+	// BliterNode does.
+	int srcSecure;
+	int dstSecure;
 };
 
 // Every case is something the composer can ask for and dpblit_sweep cannot
@@ -185,119 +207,140 @@ struct Case {
 static const struct Case cases[] = {
 	// -- single port, geometries already green on the sync path --------------
 	{ "a_baseline",   USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ "a_down2x",     USER_PRIMARY, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ "a_rot90",      USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ "a_rot270",     USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ "a_to_rgb565",  USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ "a_rgba_rgba",  USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	// -- setSrcCrop, which only exists on this class -------------------------
 	{ "a_crop_centre", USER_PRIMARY, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ "a_crop_scale",  USER_PRIMARY, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 854, 480, DP_COLOR_YV12, ROT_0, 100,100,800,400 } }, 0, 0, 0, 0, 0, 0 },
+	  { { 854, 480, DP_COLOR_YV12, ROT_0, 100,100,800,400 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	// -- setUser: the mirror's own scenario ---------------------------------
 	{ "a_user5",      USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ "a_user5_down", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	// -- the fan-out. This is the mirror's shape: one source, two sinks at
 	//    different sizes, and on the device one of them is the panel and the
 	//    other the HDMI encoder.
 	{ "a_two_same",   USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_two_sizes",  USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 1280, 720, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_two_formats", USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_two_rots",   USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_two_crops",  USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,640,360 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1, 0, 0, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_three_port", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 3,
 	  { { 1280, 720, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
 	    { 640, 360, DP_COLOR_NV12, ROT_0, 0,0,0,0 },
-	    { 320, 180, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 320, 180, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_four_port",  USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 4,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
 	    { 320, 180, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
 	    { 640, 360, DP_COLOR_NV21, ROT_0, 0,0,0,0 },
-	    { 180, 320, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 180, 320, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	// -- the lifecycle corners ----------------------------------------------
 	{ "a_pq_sc1",     USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 1, 0, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ "a_pq_sc2",     USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 2, 0, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 2, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ "a_cancel",     USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 1, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 1, 0, 0, 0, 0, 0, 0, 0 },
 	// The physical mirror's own shape: 720p panel scaled 1.5x to a 1080p sink,
 	// driven the way AsyncBliterHandler drives it — three jobs created per
 	// frame with only the last configured, repeated across frames on ONE
 	// stream. A single-shot harness cannot see what that does to the queues.
 	{ "a_mirror",     USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 1920, 1080, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2 },
+	  { { 1920, 1080, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2, 0, 0, 0 },
 	{ "a_mirror_yuv", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 1920, 1080, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2 },
+	  { { 1920, 1080, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2, 0, 0, 0 },
+	// The same shape with the destination rotating, which is what
+	// getDisplayBufferQueue hands the mirror: a different buffer every frame
+	// against the one pool. A fixed destination cannot show what the rotation
+	// does to the pool at bringup.
+	{ "a_mirror_ring", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
+	  { { 1920, 1080, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2, 3, 0, 0 },
+	{ "a_mirror_ring_yuv", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
+	  { { 1920, 1080, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2, 3, 0, 0 },
+	// Six frames over a three-deep ring, so every slot is reused rather than
+	// merely visited once.
+	{ "a_mirror_ring6", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
+	  { { 1920, 1080, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 6, 2, 3, 0, 0 },
+	// ⚠️ Secure: opt-in, because these hand the MDP a secure descriptor for a
+	// buffer this harness cannot actually protect, and the secure path is not
+	// known to fail safely. They drive the handle overloads BliterNode takes.
+	{ "a_mirror_sec", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
+	  { { 1920, 1080, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 3, 2, 0, 1, 1 },
+	{ "a_mirror_sec_src", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
+	  { { 1920, 1080, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 3, 2, 0, 1, 0 },
+	{ "a_mirror_ring_sec", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
+	  { { 1920, 1080, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 3, 2, 3, 1, 1 },
 	// -- the other scenarios, and the multi-thread path with them ------------
 	{ "a_sc2",        USER_SC2, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_sc2_down",   USER_SC2, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_sc2_rot90",  USER_SC2, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_mt",         USER_MULTI, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0, 0, 0, 0 },
 	{ "a_mt_down",    USER_MULTI, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0, 0, 0, 0 },
 	{ "a_mt_rot90",   USER_MULTI, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0, 0, 0, 0 },
 	{ "a_mt_crop",    USER_MULTI, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 1, 1, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 1, 1, 0, 0, 0, 0, 0 },
 	{ "a_mt_rgb565",  USER_MULTI, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0 },
+	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0, 0, 0, 0 },
 	{ "a_mt_two",     USER_MULTI, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0, 0, 0, 0 },
 	// -- fan-out shapes that split the output engines differently. The path
 	//    composer refuses two plain targets; a rotated target takes a WROT and
 	//    a plain one can take the WDMA, so these are the shapes that could
 	//    legally coexist.
 	{ "a_two_r0_p1",  USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_two_bothrot",USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 },
-	    { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_two_1to1",   USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_NV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 640, 360, DP_COLOR_NV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_two_sc2",    USER_SC2, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	// Scenario 2 is the only one whose fan-out reaches the tile calculator at
 	// all, so the shapes that could split the output engines are tried there.
 	{ "a_two_sc2_rot",USER_SC2, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_two_sc2_sz", USER_SC2, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 1280, 720, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_two_sc2_fmt",USER_SC2, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
+	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 	{ "a_two_sc2_crop",USER_SC2, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,640,360 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1, 0, 0, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 };
 
 // queryHWSupport answers before any buffer exists, and a wrong false silently
@@ -338,7 +381,8 @@ static void run_case(int ionFd, const struct Case *k) {
 	const unsigned srcSize = total_of(&sp);
 	int srcFd = -1;
 	void *srcVA = NULL;
-	if (alloc_ion(ionFd, srcSize, &srcFd, &srcVA) != 0) {
+	unsigned srcHandle = 0;
+	if (alloc_ion(ionFd, srcSize, &srcFd, &srcVA, &srcHandle) != 0) {
 		printf("%-15s ALLOC-FAIL\n", k->name);
 		return;
 	}
@@ -348,18 +392,30 @@ static void run_case(int ionFd, const struct Case *k) {
 	for (unsigned i = 0; i < srcSize; i++)
 		s[i] = (uint8_t)((i * 7u + (i / 977u) * 13u) & 0xff);
 
+	const int frames = (k->frames > 0) ? k->frames : 1;
+	// One destination buffer per ring slot per port, all filled with the same
+	// sentinel so an untouched count means the same thing whichever slot the
+	// last frame landed on.
+	const int ring = (k->dstRing > 1) ? ((k->dstRing > DST_RING_MAX) ? DST_RING_MAX : k->dstRing) : 1;
 	struct Planes dp[4];
 	unsigned dstSize[4] = { 0, 0, 0, 0 };
-	int dstFd[4] = { -1, -1, -1, -1 };
-	void *dstVA[4] = { NULL, NULL, NULL, NULL };
+	int dstFd[4][DST_RING_MAX];
+	void *dstVA[4][DST_RING_MAX];
+	unsigned dstHandle[4][DST_RING_MAX];
+	for (int p = 0; p < 4; p++)
+		for (int r = 0; r < DST_RING_MAX; r++) {
+			dstFd[p][r] = -1; dstVA[p][r] = NULL; dstHandle[p][r] = 0;
+		}
 	for (int p = 0; p < k->nports; p++) {
 		dp[p] = planes_for(k->port[p].dfmt, k->port[p].dw, k->port[p].dh);
 		dstSize[p] = total_of(&dp[p]);
-		if (alloc_ion(ionFd, dstSize[p], &dstFd[p], &dstVA[p]) != 0) {
-			printf("%-15s ALLOC-FAIL port %d\n", k->name, p);
-			return;
+		for (int r = 0; r < ring; r++) {
+			if (alloc_ion(ionFd, dstSize[p], &dstFd[p][r], &dstVA[p][r], &dstHandle[p][r]) != 0) {
+				printf("%-15s ALLOC-FAIL port %d slot %d\n", k->name, p, r);
+				return;
+			}
+			memset(dstVA[p][r], 0xa5, dstSize[p]);
 		}
-		memset(dstVA[p], 0xa5, dstSize[p]);
 	}
 
 	char obj[OBJ_BYTES];
@@ -374,7 +430,6 @@ static void run_case(int ionFd, const struct Case *k) {
 	if (k->cancelExtra)
 		_ZN17DpAsyncBlitStream9createJobERjRi(obj, &spareId, &spareFence);
 
-	const int frames = (k->frames > 0) ? k->frames : 1;
 	int cj = 0, cx = 0;
 	uint32_t jobId = 0;
 	int32_t fence = -1;
@@ -391,22 +446,41 @@ static void run_case(int ionFd, const struct Case *k) {
 		cx = _ZN17DpAsyncBlitStream9cancelJobEj(obj, spareId);
 
 	const int cb = _ZN17DpAsyncBlitStream14setConfigBeginEj(obj, jobId);
-	const int sb = _ZN17DpAsyncBlitStream12setSrcBufferEiPjji(obj, srcFd, sp.size, (uint32_t)sp.n, -1);
+	int sb;
+	if (k->srcSecure) {
+		// A secure source goes in as its ion handle replicated across the
+		// plane list, not as a share fd.
+		void *h[3] = { (void *)(uintptr_t)srcHandle, (void *)(uintptr_t)srcHandle,
+		               (void *)(uintptr_t)srcHandle };
+		sb = _ZN17DpAsyncBlitStream12setSrcBufferEPPvPjji(obj, h, sp.size, (uint32_t)sp.n, -1);
+	} else {
+		sb = _ZN17DpAsyncBlitStream12setSrcBufferEiPjji(obj, srcFd, sp.size, (uint32_t)sp.n, -1);
+	}
 	const int sc = _ZN17DpAsyncBlitStream12setSrcConfigEiiii13DP_COLOR_ENUM15DP_PROFILE_ENUM17DpInterlaceFormat8DpSecureb(
-		obj, k->sw, k->sh, sp.yPitch, sp.uvPitch, k->sfmt, 0, 0, 0, 1);
+		obj, k->sw, k->sh, sp.yPitch, sp.uvPitch, k->sfmt, 0, 0, k->srcSecure, 1);
 
 	int db = 0, dc = 0, sk = 0, so = 0, pq = 0;
 	for (int p = 0; p < k->nports; p++) {
 		const struct Port *o = &k->port[p];
-		db |= _ZN17DpAsyncBlitStream12setDstBufferEiiPjji(obj, p, dstFd[p], dp[p].size,
-		                                                  (uint32_t)dp[p].n, -1);
+		const int slot = f % ring;
+		if (k->dstSecure) {
+			void *h[3] = { (void *)(uintptr_t)dstHandle[p][slot],
+			               (void *)(uintptr_t)dstHandle[p][slot],
+			               (void *)(uintptr_t)dstHandle[p][slot] };
+			db |= _ZN17DpAsyncBlitStream12setDstBufferEiPPvPjji(obj, p, h, dp[p].size,
+			                                                    (uint32_t)dp[p].n, -1);
+		} else {
+			db |= _ZN17DpAsyncBlitStream12setDstBufferEiiPjji(obj, p, dstFd[p][slot], dp[p].size,
+			                                                  (uint32_t)dp[p].n, -1);
+		}
 		const int useCrop = (o->cropW != 0);
 		struct DpRect srcCrop = { useCrop ? o->cropX : 0, 0, useCrop ? o->cropY : 0, 0,
 		                          useCrop ? o->cropW : k->sw, useCrop ? o->cropH : k->sh };
 		struct DpRect dstCrop = { 0, 0, 0, 0, o->dw, o->dh };
 		sk |= _ZN17DpAsyncBlitStream10setSrcCropEi6DpRect(obj, p, &srcCrop);
 		dc |= _ZN17DpAsyncBlitStream12setDstConfigEiiiii13DP_COLOR_ENUM15DP_PROFILE_ENUM17DpInterlaceFormatP6DpRect8DpSecureb(
-			obj, p, o->dw, o->dh, dp[p].yPitch, dp[p].uvPitch, o->dfmt, 0, 0, &dstCrop, 0, 0);
+			obj, p, o->dw, o->dh, dp[p].yPitch, dp[p].uvPitch, o->dfmt, 0, 0, &dstCrop,
+			k->dstSecure, 0);
 		so |= _ZN17DpAsyncBlitStream14setOrientationEij(obj, p, o->rot);
 		if (k->pqScenario != 0) {
 			struct DpPqParam param;
@@ -435,21 +509,29 @@ static void run_case(int ionFd, const struct Case *k) {
 
 	printf("inv=%d fence=%d wait=%d |", inv, fence, fw);
 	for (int p = 0; p < k->nports; p++) {
-		const uint8_t *d = (const uint8_t *)dstVA[p];
-		unsigned off = 0, untouched = 0;
-		uint32_t sums[3] = { 0, 0, 0 };
-		for (int pl = 0; pl < dp[p].n; pl++) {
-			uint32_t sum = 0;
-			for (unsigned i = 0; i < dp[p].size[pl]; i++) {
-				uint8_t b = d[off + i];
-				sum = sum * 31u + b;
-				if (b == 0xa5) untouched++;
+		// Every slot is summed, not just the one the last frame used: a frame
+		// landing in the wrong buffer is invisible if only one is read.
+		for (int r = 0; r < ring; r++) {
+			const uint8_t *d = (const uint8_t *)dstVA[p][r];
+			unsigned off = 0, untouched = 0;
+			uint32_t sums[3] = { 0, 0, 0 };
+			for (int pl = 0; pl < dp[p].n; pl++) {
+				uint32_t sum = 0;
+				for (unsigned i = 0; i < dp[p].size[pl]; i++) {
+					uint8_t b = d[off + i];
+					sum = sum * 31u + b;
+					if (b == 0xa5) untouched++;
+				}
+				sums[pl] = sum;
+				off += dp[p].size[pl];
 			}
-			sums[pl] = sum;
-			off += dp[p].size[pl];
+			if (ring > 1)
+				printf(" P%d/%d:%d %08x %08x %08x u=%u/%u |",
+				       p, r, dp[p].n, sums[0], sums[1], sums[2], untouched, dstSize[p]);
+			else
+				printf(" P%d:%d %08x %08x %08x u=%u/%u |",
+				       p, dp[p].n, sums[0], sums[1], sums[2], untouched, dstSize[p]);
 		}
-		printf(" P%d:%d %08x %08x %08x u=%u/%u |",
-		       p, dp[p].n, sums[0], sums[1], sums[2], untouched, dstSize[p]);
 	}
 	printf("\n");
 	fflush(stdout);
@@ -461,8 +543,10 @@ static void run_case(int ionFd, const struct Case *k) {
 	ion_munmap(ionFd, srcVA, srcSize);
 	close(srcFd);
 	for (int p = 0; p < k->nports; p++) {
-		ion_munmap(ionFd, dstVA[p], dstSize[p]);
-		close(dstFd[p]);
+		for (int r = 0; r < ring; r++) {
+			ion_munmap(ionFd, dstVA[p][r], dstSize[p]);
+			close(dstFd[p][r]);
+		}
 	}
 }
 
