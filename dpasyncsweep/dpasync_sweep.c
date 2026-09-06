@@ -169,6 +169,13 @@ struct Case {
 	// it. ⚠️⚠️ A wedged CMDQ freezes the panel at the kernel level: VSYNC times
 	// out on primary_disp and only a reboot clears it. Needs its own opt-in.
 	int wedges;
+	// Frames to run through ONE stream, and jobs created per frame before the
+	// one that gets configured. The composer creates three (two fill-black
+	// plus the output) every frame and configures only the last, so a harness
+	// that creates one job and invalidates once never sees what it does to
+	// the queues. 0 means the plain single-shot behaviour.
+	int frames;
+	int extraJobsPerFrame;
 };
 
 // Every case is something the composer can ask for and dpblit_sweep cannot
@@ -178,111 +185,119 @@ struct Case {
 static const struct Case cases[] = {
 	// -- single port, geometries already green on the sync path --------------
 	{ "a_baseline",   USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
 	{ "a_down2x",     USER_PRIMARY, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
 	{ "a_rot90",      USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
 	{ "a_rot270",     USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 0, 0 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
 	{ "a_to_rgb565",  USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
 	{ "a_rgba_rgba",  USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
 	// -- setSrcCrop, which only exists on this class -------------------------
 	{ "a_crop_centre", USER_PRIMARY, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 0, 0, 0, 0 },
 	{ "a_crop_scale",  USER_PRIMARY, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 854, 480, DP_COLOR_YV12, ROT_0, 100,100,800,400 } }, 0, 0, 0, 0 },
+	  { { 854, 480, DP_COLOR_YV12, ROT_0, 100,100,800,400 } }, 0, 0, 0, 0, 0, 0 },
 	// -- setUser: the mirror's own scenario ---------------------------------
 	{ "a_user5",      USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
 	{ "a_user5_down", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0 },
 	// -- the fan-out. This is the mirror's shape: one source, two sinks at
 	//    different sizes, and on the device one of them is the panel and the
 	//    other the HDMI encoder.
 	{ "a_two_same",   USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_two_sizes",  USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 1280, 720, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_two_formats", USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_two_rots",   USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_two_crops",  USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,640,360 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_three_port", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 3,
 	  { { 1280, 720, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
 	    { 640, 360, DP_COLOR_NV12, ROT_0, 0,0,0,0 },
-	    { 320, 180, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 320, 180, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_four_port",  USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 4,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
 	    { 320, 180, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
 	    { 640, 360, DP_COLOR_NV21, ROT_0, 0,0,0,0 },
-	    { 180, 320, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 180, 320, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	// -- the lifecycle corners ----------------------------------------------
 	{ "a_pq_sc1",     USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 1, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 1, 0, 0, 0, 0, 0 },
 	{ "a_pq_sc2",     USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 2, 0, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 2, 0, 0, 0, 0, 0 },
 	{ "a_cancel",     USER_MIRROR, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 1, 0, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 1, 0, 0, 0, 0 },
+	// The physical mirror's own shape: 720p panel scaled 1.5x to a 1080p sink,
+	// driven the way AsyncBliterHandler drives it — three jobs created per
+	// frame with only the last configured, repeated across frames on ONE
+	// stream. A single-shot harness cannot see what that does to the queues.
+	{ "a_mirror",     USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
+	  { { 1920, 1080, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2 },
+	{ "a_mirror_yuv", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
+	  { { 1920, 1080, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2 },
 	// -- the other scenarios, and the multi-thread path with them ------------
 	{ "a_sc2",        USER_SC2, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_sc2_down",   USER_SC2, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_sc2_rot90",  USER_SC2, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_mt",         USER_MULTI, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0 },
 	{ "a_mt_down",    USER_MULTI, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0 },
 	{ "a_mt_rot90",   USER_MULTI, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 1 },
+	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0 },
 	{ "a_mt_crop",    USER_MULTI, 1280, 720, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 1, 1 },
+	  { { 640, 360, DP_COLOR_YV12, ROT_0, 320,180,640,360 } }, 0, 0, 1, 1, 0, 0 },
 	{ "a_mt_rgb565",  USER_MULTI, 640, 360, DP_COLOR_RGBA8888, 1,
-	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1 },
+	  { { 640, 360, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0 },
 	{ "a_mt_two",     USER_MULTI, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 1, 0, 0 },
 	// -- fan-out shapes that split the output engines differently. The path
 	//    composer refuses two plain targets; a rotated target takes a WROT and
 	//    a plain one can take the WDMA, so these are the shapes that could
 	//    legally coexist.
 	{ "a_two_r0_p1",  USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_two_bothrot",USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 },
-	    { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 360, 640, DP_COLOR_YV12, ROT_270, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_two_1to1",   USER_PRIMARY, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_NV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 640, 360, DP_COLOR_NV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_two_sc2",    USER_SC2, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	// Scenario 2 is the only one whose fan-out reaches the tile calculator at
 	// all, so the shapes that could split the output engines are tried there.
 	{ "a_two_sc2_rot",USER_SC2, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 360, 640, DP_COLOR_YV12, ROT_90, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_two_sc2_sz", USER_SC2, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 1280, 720, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_two_sc2_fmt",USER_SC2, 640, 360, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,0,0 },
-	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0 },
+	    { 640, 360, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 1, 0, 0, 0 },
 	{ "a_two_sc2_crop",USER_SC2, 1280, 720, DP_COLOR_RGBA8888, 2,
 	  { { 640, 360, DP_COLOR_YV12, ROT_0, 0,0,640,360 },
-	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1, 0 },
+	    { 640, 360, DP_COLOR_YV12, ROT_0, 640,360,640,360 } }, 0, 0, 1, 0, 0, 0 },
 };
 
 // queryHWSupport answers before any buffer exists, and a wrong false silently
@@ -359,10 +374,19 @@ static void run_case(int ionFd, const struct Case *k) {
 	if (k->cancelExtra)
 		_ZN17DpAsyncBlitStream9createJobERjRi(obj, &spareId, &spareFence);
 
+	const int frames = (k->frames > 0) ? k->frames : 1;
+	int cj = 0, cx = 0;
 	uint32_t jobId = 0;
 	int32_t fence = -1;
-	const int cj = _ZN17DpAsyncBlitStream9createJobERjRi(obj, &jobId, &fence);
-	int cx = 0;
+  for (int f = 0; f < frames; f++) {
+	// The composer's shape: several jobs created, only the last configured.
+	for (int e = 0; e < k->extraJobsPerFrame; e++) {
+		uint32_t xid = 0; int32_t xf = -1;
+		_ZN17DpAsyncBlitStream9createJobERjRi(obj, &xid, &xf);
+		if (xf >= 0) close(xf);
+	}
+	if (fence >= 0) { close(fence); fence = -1; }
+	cj = _ZN17DpAsyncBlitStream9createJobERjRi(obj, &jobId, &fence);
 	if (k->cancelExtra)
 		cx = _ZN17DpAsyncBlitStream9cancelJobEj(obj, spareId);
 
@@ -399,6 +423,12 @@ static void run_case(int ionFd, const struct Case *k) {
 	fflush(stdout);
 
 	const int inv = _ZN17DpAsyncBlitStream10invalidateEv(obj);
+	if (f + 1 < frames) {
+		if (fence >= 0) sync_wait(fence, 3000);
+		printf("f%d:inv=%d ", f, inv);
+		fflush(stdout);
+		continue;
+	}
 	// The blit is asynchronous: the pixels are not there until the job's
 	// fence signals, so a checksum taken before this is meaningless.
 	const int fw = (fence >= 0) ? sync_wait(fence, 3000) : -2;
@@ -423,6 +453,7 @@ static void run_case(int ionFd, const struct Case *k) {
 	}
 	printf("\n");
 	fflush(stdout);
+  }
 
 	if (fence >= 0) close(fence);
 	if (spareFence >= 0) close(spareFence);
