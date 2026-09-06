@@ -1,0 +1,32 @@
+// dpblit_sweep: a table of deterministic MDP blits, so the geometry the tile
+// calculator produces can be diffed case by case between the stock
+// libdpframework and the reconstruction. screenrecord only ever asks for one
+// size and one format pair; most of what could be wrong is never touched.
+//
+// Diagnostic only, never shipped and not in PRODUCT_PACKAGES. Built for both
+// ABIs: the 64-bit reconstruction serves the composer and had no deterministic
+// harness of its own. Run it under su -- the shell domain cannot reach
+// /dev/mtk_cmdq.
+//
+// The canonical source is tools/dpblit_sweep/dpblit_sweep.c; this is a copy.
+cc_binary {
+	name: "dpblit_sweep",
+	compile_multilib: "both",
+	multilib: {
+		lib32: { suffix: "32" },
+		lib64: { suffix: "64" },
+	},
+
+	srcs: ["dpblit_sweep.c"],
+	shared_libs: [
+		"libdpframework.reconstruct",
+		"libion",
+		"libion_mtk",
+		"liblog",
+	],
+
+	cflags: [
+		"-Wall",
+		"-Werror",
+	],
+}
