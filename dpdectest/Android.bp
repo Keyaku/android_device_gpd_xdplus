@@ -1,0 +1,26 @@
+// dpdec_test: headless hardware decode through OMX.MTK.VIDEO.DECODER.AVC, so
+// the decode consumer of libdpframework can be measured rather than assumed.
+//
+// Diagnostic only, never shipped and not in PRODUCT_PACKAGES. Built for both
+// ABIs: the decoder service is 32-bit, but the driver process can be either.
+//
+// The canonical source is tools/dpdec_test/dpdec_test.cpp; this is a copy.
+cc_binary {
+	name: "dpdec_test",
+	compile_multilib: "both",
+	multilib: {
+		lib32: { suffix: "32" },
+		lib64: { suffix: "64" },
+	},
+
+	srcs: ["dpdec_test.cpp"],
+	shared_libs: [
+		"libmediandk",
+		"liblog",
+	],
+
+	cflags: [
+		"-Wall",
+		"-Werror",
+	],
+}
