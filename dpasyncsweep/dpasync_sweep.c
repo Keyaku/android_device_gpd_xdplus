@@ -510,6 +510,7 @@ static void run_case(int ionFd, const struct Case *k) {
 	// fence signals, so a checksum taken before this is meaningless.
 	const int fw = (fence >= 0) ? sync_wait(fence, 3000) : -2;
 
+	int starved = 0;
 	printf("inv=%d fence=%d wait=%d |", inv, fence, fw);
 	for (int p = 0; p < k->nports; p++) {
 		// Every slot is summed, not just the one the last frame used: a frame
@@ -528,6 +529,10 @@ static void run_case(int ionFd, const struct Case *k) {
 				sums[pl] = sum;
 				off += dp[p].size[pl];
 			}
+			// ⚠️ Nothing written at all: a CMDQ-starved blit still returns 0
+			// and signals its fence, so without this a starved run reads as a
+			// pass and two starved arms agree perfectly.
+			if (untouched == dstSize[p]) starved++;
 			if (ring > 1)
 				printf(" P%d/%d:%d %08x %08x %08x u=%u/%u |",
 				       p, r, dp[p].n, sums[0], sums[1], sums[2], untouched, dstSize[p]);
@@ -537,6 +542,8 @@ static void run_case(int ionFd, const struct Case *k) {
 			dump_dst(k->name, p, dstVA[p][r], dstSize[p]);
 		}
 	}
+	if (starved && inv == 0)
+		printf(" STARVED(%d)", starved);
 	printf("\n");
 	fflush(stdout);
   }
@@ -600,6 +607,7 @@ int main(int argc, char **argv) {
 	// the display and cost a reboot.
 	const int doWedging = (argc > 5) ? atoi(argv[5]) : 0;
 	const int doFdDump = (argc > 6) ? atoi(argv[6]) : 0;
+	int warnedLeak = 0;
 	// argv[7]: write each destination to /data/local/tmp/dst_<case>_p<port>.bin
 	// so the two arms can be diffed byte for byte instead of by checksum.
 	g_dstDump = (argc > 7) ? argv[7] : NULL;
@@ -613,6 +621,12 @@ int main(int argc, char **argv) {
 		if (cases[c].wedges && !doWedging) {
 			printf("%-15s SKIPPED (hangs and wedges CMDQ — reboot to clear)\n", cases[c].name);
 			continue;
+		}
+		if (cases[c].unreachable && doUnreachable && !warnedLeak) {
+			warnedLeak = 1;
+			fprintf(stderr,
+			        "WARNING: secure opt-in cases leak a CMDQ task and 3 engines "
+			        "(stock does too); later cases write nothing until a reboot\n");
 		}
 		if (cases[c].unreachable && !doUnreachable) {
 			printf("%-15s SKIPPED (no consumer reaches this)\n", cases[c].name);
