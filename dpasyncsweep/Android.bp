@@ -1,0 +1,32 @@
+// dpasync_sweep: deterministic blits through DpAsyncBlitStream -- the job and
+// fence lifecycle, the four-port destination fan-out and the separate
+// setSrcCrop, none of which DpBlitStream exposes and none of which any harness
+// reached before. The composer is the only consumer of this class, and the
+// fan-out is the shape the HDMI mirror asks for.
+//
+// Diagnostic only, never shipped and not in PRODUCT_PACKAGES. Built for both
+// ABIs. Run it under su -- the shell domain cannot reach /dev/mtk_cmdq.
+//
+// The canonical source is tools/dpasync_sweep/dpasync_sweep.c; this is a copy.
+cc_binary {
+	name: "dpasync_sweep",
+	compile_multilib: "both",
+	multilib: {
+		lib32: { suffix: "32" },
+		lib64: { suffix: "64" },
+	},
+
+	srcs: ["dpasync_sweep.c"],
+	shared_libs: [
+		"libdpframework.reconstruct",
+		"libion",
+		"libion_mtk",
+		"libsync",
+		"liblog",
+	],
+
+	cflags: [
+		"-Wall",
+		"-Werror",
+	],
+}
