@@ -36,8 +36,12 @@ BOARD_KERNEL_OFFSET := 0x00080000
 # log_buf_len is not a debugging luxury on this device. The default 512 KB ring
 # (CONFIG_LOG_BUF_SHIFT=19) wraps in about 12 SECONDS under a Vulkan gameplay
 # workload, which repeatedly destroyed the evidence for a kernel bug before it
-# could be read. 8 MB covers a whole boot; it costs 8 MB of RAM out of 4 GB.
-BOARD_KERNEL_CMDLINE := log_buf_len=8M loglevel=7 bootopt=64S3,32N2,64N2
+# could be read.
+#
+# 4M is the largest usable value, not a compromise: printk rounds the request up
+# to a power of two, and LK's kedump refuses to store a ring that does not fit
+# its 7 MB dump region, dropping the kernel log record entirely.
+BOARD_KERNEL_CMDLINE := log_buf_len=4M loglevel=7 bootopt=64S3,32N2,64N2
 BOARD_KERNEL_IMAGE_NAME := Image.gz-dtb
 BOARD_KERNEL_PAGESIZE := 2048
 # Offsets from the shipped boot.img header (ramdisk @0x55000000, tags @0x54000000,
