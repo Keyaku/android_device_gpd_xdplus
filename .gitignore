@@ -19,6 +19,12 @@ dpframework/.sync-manifest
 gralloc_extra/src/
 gralloc_extra/.sync-manifest
 
+# Same for the reconstructed composer: tools/hwc_reconstruct is canonical,
+# sync_hwc.sh refreshes this copy and drops src/include/compat on the way, so
+# the module never builds against the host stand-in headers.
+hwcomposer/src/
+hwcomposer/.sync-manifest
+
 # The two blit diagnostics are the same arrangement: tools/cmdq_shim and
 # tools/dpblit_test in the workspace are canonical, and these are copies soong
 # can see. Neither module is in PRODUCT_PACKAGES.

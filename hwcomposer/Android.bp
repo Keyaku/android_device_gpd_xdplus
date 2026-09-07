@@ -1,0 +1,71 @@
+// The reconstructed composer: hwcomposer.mt8173.so rebuilt from the shipping
+// blob. Unlike libdpframework and libgralloc_extra, this one has no blob
+// consumers to satisfy by soname -- SurfaceFlinger loads it through
+// hw_get_module, which appends the ro.hardware.hwcomposer value to
+// "hwcomposer." -- so it takes a third name of its own and leaves both existing
+// ones alone:
+//
+//   ro.hardware.hwcomposer=mt8173   the stock blob
+//   ro.hardware.hwcomposer=xdplus   hwcshim, wrapping the stock blob (shipping)
+//   ro.hardware.hwcomposer=recon    this
+//
+// That is the whole safety story: /system/vendor remounts rw on a userdebug
+// build, so trying this is one property and a reboot, and undoing it is the
+// same.
+//
+// It is NOT known to compose a frame. The reconstruction links with nothing of
+// ours undefined, but several blob-internal helpers it calls are still no-op
+// stubs in src/compat_stubs.cpp. Building it is what makes the next question
+// askable, not an answer to it.
+//
+// Deliberately NOT in PRODUCT_PACKAGES, for the same reason as hwcshim,
+// dpframework and gralloc_extra: /vendor is the frozen partition, and anything
+// soong stages under out/.../system/vendor is shadowed at runtime by the
+// partition mount. Build it with `mka hwcomposer.recon` and copy the result
+// into vendor/gpd/xdplus/proprietary/vendor/lib64/hw/, bumping the vendor rev
+// with it.
+//
+// src/ is a copy. The canonical tree is tools/hwc_reconstruct/src, which
+// carries the decompilation and the gates; sync_hwc.sh refreshes this copy and
+// refuses to run backwards.
+//
+// src/include/compat is NOT copied here. Those are host-only stand-ins for
+// AOSP headers so the gates can run off-tree; on the device the real ones must
+// win, and putting compat/ back on the include path would silently build the
+// reconstruction against the wrong declarations.
+cc_library_shared {
+	name: "hwcomposer.recon",
+	proprietary: true,
+	relative_install_path: "hw",
+	compile_multilib: "64",
+
+	srcs: ["src/*.cpp"],
+	local_include_dirs: ["src/include"],
+
+	header_libs: [
+		"libhardware_headers",
+		"libsystem_headers",
+	],
+
+	shared_libs: [
+		"libcutils",
+		"liblog",
+		"libutils",
+		"libsync",
+		"libion",
+		// Our own reconstruction, by soname.
+		"libgralloc_extra.reconstruct",
+		// Imported blob, declared in vendor/gpd/xdplus/Android.bp.
+		"libged",
+	],
+
+	cflags: [
+		"-Wall",
+		"-Werror",
+		"-Wno-unused-parameter",
+		// The classes are layout reconstructions: the padding members exist to
+		// place the next field at the offset the blob proves, and the layout
+		// gates read them. They are structure, not state.
+		"-Wno-unused-private-field",
+	],
+}
