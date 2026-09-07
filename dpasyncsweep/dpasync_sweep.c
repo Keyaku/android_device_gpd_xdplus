@@ -32,6 +32,7 @@
 #define DP_COLOR_RGBA8888 PACK(0, 1, 0, 0, 0, 32, 0, 1, 2)
 #define DP_COLOR_BGRA8888 PACK(0, 1, 0, 0, 0, 32, 0, 0, 2)
 #define DP_COLOR_I420     PACK(0, 3, 0, 1, 1,  8, 1, 0, 8)
+#define DP_COLOR_YUY2     PACK(0, 1, 0, 1, 0, 16, 1, 0, 5)
 #define DP_COLOR_YV12     PACK(0, 3, 0, 1, 1,  8, 1, 1, 8)
 #define DP_COLOR_NV12     PACK(0, 2, 1, 1, 1,  8, 1, 0, 12)
 #define DP_COLOR_NV21     PACK(0, 2, 1, 1, 1,  8, 1, 1, 12)
@@ -121,7 +122,8 @@ static struct Planes planes_for(uint32_t fmt, int w, int h) {
 	const int cw = (w + 1) / 2, ch = (h + 1) / 2;
 	if (fmt == DP_COLOR_RGBA8888 || fmt == DP_COLOR_BGRA8888) {
 		p.n = 1; p.size[0] = (unsigned)(w * h * 4); p.yPitch = w * 4;
-	} else if (fmt == DP_COLOR_RGB565) {
+	} else if (fmt == DP_COLOR_RGB565 || fmt == DP_COLOR_YUY2) {
+		// YUY2 is one packed plane at 2 bytes per pixel, like RGB565.
 		p.n = 1; p.size[0] = (unsigned)(w * h * 2); p.yPitch = w * 2;
 	} else if (fmt == DP_COLOR_YV12 || fmt == DP_COLOR_I420) {
 		p.n = 3; p.size[0] = (unsigned)(w * h);
@@ -267,6 +269,34 @@ static const struct Case cases[] = {
 	// driven the way AsyncBliterHandler drives it — three jobs created per
 	// frame with only the last configured, repeated across frames on ONE
 	// stream. A single-shot harness cannot see what that does to the queues.
+	// ⭐ The mirror's REAL format, decoded from the config word 0x01101045:
+	// DP_COLOR_YUY2, packed YUV422. Every other case in this file is RGB or
+	// PLANAR YUV, so nothing here ever exercised packed 422 until now.
+	{ "a_yuy2_copy",  USER_MIRROR, 736, 1280, DP_COLOR_YUY2, 1,
+	  { { 736, 1280, DP_COLOR_YUY2, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ "a_yuy2_up",    USER_MIRROR, 736, 1280, DP_COLOR_YUY2, 1,
+	  { { 1104, 1920, DP_COLOR_YUY2, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ "a_yuy2_rot90", USER_MIRROR, 736, 1280, DP_COLOR_YUY2, 1,
+	  { { 1920, 1080, DP_COLOR_YUY2, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ "a_yuy2_from_rgba", USER_MIRROR, 736, 1280, DP_COLOR_RGBA8888, 1,
+	  { { 1920, 1080, DP_COLOR_YUY2, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ "a_mirror_yuy2", USER_MIRROR, 736, 1280, DP_COLOR_YUY2, 1,
+	  { { 1920, 1080, DP_COLOR_YUY2, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2, 3, 0, 0 },
+	// The PHYSICAL mirror's measured shape, read off the live composer:
+	// a 736x1280 RGB565 framebuffer scaled 1.5x and rotated 90 into a 1080p
+	// sink. Every earlier mirror case was RGBA8888 and unrotated, so nothing
+	// covered the format, the rotation or the upscale the device asks for.
+	{ "a_mirror_live", USER_MIRROR, 736, 1280, DP_COLOR_RGB565, 1,
+	  { { 1920, 1080, DP_COLOR_RGB565, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2, 3, 0, 0 },
+	// The three variables of that shape, one at a time.
+	{ "a_565_copy",   USER_MIRROR, 736, 1280, DP_COLOR_RGB565, 1,
+	  { { 736, 1280, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ "a_565_rot90",  USER_MIRROR, 736, 1280, DP_COLOR_RGB565, 1,
+	  { { 1920, 1080, DP_COLOR_RGB565, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ "a_565_up",     USER_MIRROR, 736, 1280, DP_COLOR_RGB565, 1,
+	  { { 1104, 1920, DP_COLOR_RGB565, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ "a_rgba_rot90_up", USER_MIRROR, 736, 1280, DP_COLOR_RGBA8888, 1,
+	  { { 1920, 1080, DP_COLOR_RGBA8888, ROT_90, 0,0,0,0 } }, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ "a_mirror",     USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
 	  { { 1920, 1080, DP_COLOR_RGBA8888, ROT_0, 0,0,0,0 } }, 0, 0, 0, 0, 3, 2, 0, 0, 0 },
 	{ "a_mirror_yuv", USER_MIRROR, 1280, 720, DP_COLOR_RGBA8888, 1,
