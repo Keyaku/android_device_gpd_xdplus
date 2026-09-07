@@ -55,9 +55,17 @@ cc_library_shared {
 		"libion",
 		// Our own reconstruction, by soname.
 		"libgralloc_extra.reconstruct",
-		// Imported blob, declared in vendor/gpd/xdplus/Android.bp.
+		// Imported blobs, declared in vendor/gpd/xdplus/Android.bp: libged for
+		// the ged_log_* calls, libion_mtk for ion_share_close, which is a
+		// MediaTek extension and not in AOSP's libion.
 		"libged",
+		"libion_mtk",
 	],
+
+	// The blob names 28 libraries; this reconstruction names 7 of them plus
+	// bionic. The difference is what is not translated: no HIDL, no libgui,
+	// no libbinder, no PQ, no power HAL, and libdpframework is reached through
+	// the blit path, which the composer does not call directly here.
 
 	cflags: [
 		"-Wall",
