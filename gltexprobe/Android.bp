@@ -1,0 +1,29 @@
+// gltex_probe: bind a YUV buffer as a GL external texture, the path a
+// TextureView/SurfaceTexture player takes. Five real video apps all render
+// through a SurfaceView instead, so the MTK GLES driver's conversion seam --
+// and the setPQParameter stub behind it -- was never reached by any of them.
+//
+// Diagnostic only, never shipped and not in PRODUCT_PACKAGES.
+//
+// The canonical source is tools/gltex_probe/gltex_probe.c; this is a copy.
+cc_binary {
+	name: "gltex_probe",
+	compile_multilib: "both",
+	multilib: {
+		lib32: { suffix: "32" },
+		lib64: { suffix: "64" },
+	},
+
+	srcs: ["gltex_probe.c"],
+	shared_libs: [
+		"libEGL",
+		"libGLESv2",
+		"libnativewindow",
+		"liblog",
+	],
+
+	cflags: [
+		"-Wall",
+		"-Werror",
+	],
+}
