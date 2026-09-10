@@ -53,6 +53,8 @@ cc_library_shared {
 		"libutils",
 		"libsync",
 		"libion",
+		// hw_get_module: the gralloc1 allocator the buffer queue opens.
+		"libhardware",
 		// Our own reconstructions, by soname. dpframework is what the layer
 		// predicates ask whether MDP can scale a given crop.
 		"libgralloc_extra.reconstruct",
