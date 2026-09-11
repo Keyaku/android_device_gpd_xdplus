@@ -6,24 +6,23 @@
 // ones alone:
 //
 //   ro.hardware.hwcomposer=mt8173   the stock blob
-//   ro.hardware.hwcomposer=xdplus   hwcshim, wrapping the stock blob (shipping)
-//   ro.hardware.hwcomposer=recon    this
+//   ro.hardware.hwcomposer=xdplus   hwcshim, wrapping the stock blob
+//   ro.hardware.hwcomposer=recon    this (shipping since rev 14)
 //
 // That is the whole safety story: /system/vendor remounts rw on a userdebug
 // build, so trying this is one property and a reboot, and undoing it is the
 // same.
 //
-// It is NOT known to compose a frame. The reconstruction links with nothing of
-// ours undefined, but several blob-internal helpers it calls are still no-op
-// stubs in src/compat_stubs.cpp. Building it is what makes the next question
-// askable, not an answer to it.
+// It composes: panel, video and the HDMI mirror run on it, and it is the
+// selected composer from vendor rev 14. Several blob-internal helpers are
+// still no-op stubs in src/compat_stubs.cpp.
 //
 // Deliberately NOT in PRODUCT_PACKAGES, for the same reason as hwcshim,
 // dpframework and gralloc_extra: /vendor is the frozen partition, and anything
 // soong stages under out/.../system/vendor is shadowed at runtime by the
 // partition mount. Build it with `mka hwcomposer.recon` and copy the result
 // into vendor/gpd/xdplus/proprietary/vendor/lib64/hw/, bumping the vendor rev
-// with it.
+// with it. build_vendor_image.sh compares the two and aborts on a stale copy.
 //
 // src/ is a copy. The canonical tree is tools/hwc_reconstruct/src, which
 // carries the decompilation and the gates; sync_hwc.sh refreshes this copy and
