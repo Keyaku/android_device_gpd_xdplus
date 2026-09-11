@@ -18,6 +18,8 @@
     <!-- %1$s is the chosen mode. The script reads the property when the mirror
          starts, so a change does not touch a running one. -->
     <string name="xdplus_hdmi_res_summary" translatable="false">%1$s — applies the next time the mirror starts</string>
+    <string name="xdplus_hwc_vds_title" translatable="false">Record and cast through the display composer</string>
+    <string name="xdplus_hwc_vds_summary" translatable="false">Experimental. Screen recording and casting skip the GPU, which is smoother and cheaper on battery, but closing the recorded app mid-recording can restart the display and drop the recording. Applied at the next boot.</string>
 
     <!-- Non-selectable notes block at the top of the Display out page. Mirroring
          and its audio ship, so this states the rough edges that remain instead

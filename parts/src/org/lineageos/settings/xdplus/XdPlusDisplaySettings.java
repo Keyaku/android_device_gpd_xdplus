@@ -17,8 +17,10 @@ public class XdPlusDisplaySettings extends XdPlusFragmentBase {
     private static final String KEY_HDMI_UP = "xdplus_hdmi_up";
     private static final String KEY_HDMI_DOWN = "xdplus_hdmi_down";
     private static final String KEY_HDMI_RES = "xdplus_hdmi_res";
+    private static final String KEY_HWC_VDS = "xdplus_hwc_vds";
 
     private static final String PROP_HDMI_RES = "persist.sys.xdplus.hdmi_res";
+    private static final String PROP_HWC_VDS = "persist.sys.xdplus.hwc_vds";
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -26,6 +28,7 @@ public class XdPlusDisplaySettings extends XdPlusFragmentBase {
         addPreferencesFromResource(R.xml.gpd_xdplus_display_settings);
 
         bindList(KEY_HDMI_RES, PROP_HDMI_RES, "2", R.string.xdplus_hdmi_res_summary);
+        bindSwitch(KEY_HWC_VDS, PROP_HWC_VDS);
     }
 
     @Override
