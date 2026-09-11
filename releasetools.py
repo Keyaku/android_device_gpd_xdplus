@@ -37,7 +37,7 @@ VENDOR_REV_PROP = "ro.vendor.xdplus.rev"
 # rev 3 patches the audio HAL's HDMI sink-format check, which is stubbed to always
 # refuse in the OEM blob and therefore kept AUX_DIGITAL from ever being opened.
 # rev 2 adds hwcomposer.xdplus.so and the ro.hardware.hwcomposer line that selects it.
-VENDOR_REV_ACCEPTED = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25")
+VENDOR_REV_ACCEPTED = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26")
 
 VENDOR_DEVICE = "/dev/block/platform/mtk-msdc.0/11230000.MSDC0/by-name/vendor"
 VENDOR_MOUNT = "/vendor"
