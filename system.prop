@@ -133,6 +133,12 @@ persist.sys.xdplus.hdmi_force_validate=0
 # now the default. The Settings toggle can re-enable it for A/B testing.
 persist.sys.xdplus.hdmi_novsync=1
 
+# Screen recording / casting through the composer's virtual display instead of
+# GPU composition. init.xdplus.rc mirrors it into debug.sf.enable_hwc_vds, which
+# SurfaceFlinger reads once at start. Off by default: the reconstructed composer
+# still aborts when the recorded app's layer set changes mid-session.
+persist.sys.xdplus.hwc_vds=0
+
 # SoC identity. Android 12 props, unset on 11, but hardware-info apps read them
 # and show an empty vendor without. Informational only; nothing in AOSP 11 or
 # the vendor blobs consumes them.

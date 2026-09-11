@@ -61,6 +61,15 @@ on property:sys.xdplus.action=hdmi_up
 on property:sys.xdplus.action=hdmi_down
     start xdplus-tweaks
 
+# HWC virtual displays (Settings toggle). SurfaceFlinger reads the debug prop
+# once at start, so a change applies at the next boot; persist props load
+# before class core starts, which is early enough.
+on property:persist.sys.xdplus.hwc_vds=1
+    setprop debug.sf.enable_hwc_vds 1
+
+on property:persist.sys.xdplus.hwc_vds=0
+    setprop debug.sf.enable_hwc_vds 0
+
 # SELinux denial recorder. Opt-in: it holds a dmesg reader open all boot.
 service xdplus-avcd /system/bin/xdplus_avcd
     class late_start
