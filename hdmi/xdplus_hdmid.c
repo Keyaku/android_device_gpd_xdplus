@@ -118,6 +118,27 @@ static int is_hdmi_switch_event(const char *buf, ssize_t len)
 	return 0;
 }
 
+/* True if the record set carries SWITCH_STATE=0. The composer acts on every
+ * uevent, so a plug-out inside a burst tears the external down even when
+ * the burst ends plugged; the daemon has to notice it to bring it back.
+ */
+static int has_state_zero(const char *buf, ssize_t len)
+{
+	ssize_t i = 0;
+
+	while (i < len) {
+		const char *rec = buf + i;
+		size_t reclen = strnlen(rec, (size_t)(len - i));
+
+		if (!strcmp(rec, "SWITCH_STATE=0"))
+			return 1;
+
+		i += (ssize_t)reclen + 1;
+	}
+
+	return 0;
+}
+
 int main(void)
 {
 	struct sockaddr_nl addr;
@@ -157,6 +178,7 @@ int main(void)
 		ssize_t n;
 		int state;
 		int ret;
+		int bounced;
 
 		/* Block indefinitely: no wakeup until the kernel has something. */
 		ret = TEMP_FAILURE_RETRY(poll(&pfd, 1, -1));
@@ -174,13 +196,19 @@ int main(void)
 
 		/* Drain the rest of the burst before reading the attribute, so a
 		 * bouncing cable produces one action rather than one per bounce.
+		 * Remember whether any record in it was a plug-out: the composer
+		 * tears the external down on that, and only hdmi_up rebuilds it.
 		 */
+		bounced = has_state_zero(buf, n);
 		for (;;) {
 			ret = TEMP_FAILURE_RETRY(poll(&pfd, 1, DEBOUNCE_MS));
 			if (ret <= 0)
 				break;
-			if (TEMP_FAILURE_RETRY(recv(sock, buf, sizeof(buf), 0)) <= 0)
+			n = TEMP_FAILURE_RETRY(recv(sock, buf, sizeof(buf), 0));
+			if (n <= 0)
 				break;
+			if (is_hdmi_switch_event(buf, n) && has_state_zero(buf, n))
+				bounced = 1;
 		}
 
 		state = read_hdmi_state();
@@ -189,8 +217,13 @@ int main(void)
 			continue;
 		}
 
-		if (state == last_state)
+		if (state == last_state) {
+			if (state == HDMI_ACTIVE && bounced) {
+				ALOGI("hdmi bounced while plugged, rebuilding the mirror");
+				run_tweaks("hdmi_up");
+			}
 			continue;
+		}
 
 		ALOGI("hdmi switch state %d -> %d", last_state, state);
 		last_state = state;
