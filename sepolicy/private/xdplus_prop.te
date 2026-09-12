@@ -10,6 +10,9 @@ set_prop(system_app, xdplus_prop)
 # HDMI bring-up state it is handed), and the toolbox domain -- init's own
 # getprop/setprop -- reads them from init.xdplus.rc.
 get_prop(surfaceflinger, xdplus_prop)
+# SurfaceFlinger publishes the external display's power state in
+# sys.xdplus.hdmi_power for the HDMI daemon's sleep timeout.
+set_prop(surfaceflinger, xdplus_prop)
 get_prop(toolbox, xdplus_prop)
 
 # vkshim is loaded inside every app process that uses Vulkan, and reads its own
