@@ -48,14 +48,16 @@
 /* Coalesce a plug bounce into one action. */
 #define DEBOUNCE_MS		1000
 
-/* Sleep timeout: SurfaceFlinger publishes the external display's power state
- * in POWER_PROP ("0" asleep, "1" awake). SLEEP_PROP holds the minutes asleep
+/* Sleep timeout: SurfaceFlinger publishes the built-in screen's power state
+ * in POWER_PROP ("0" asleep, "1" awake); the external's own state is useless
+ * here because a torn-down external has no display left to report the wake.
+ * SLEEP_PROP holds the minutes asleep
  * after which the HDMI output is switched off; 0 leaves it on, showing black.
  * A torn-down output is rebuilt on wake through the same cable-event path as
  * a replug: the timer thread only pokes hdmictl, and the resulting switch
  * uevents drive the main loop, so hdmi_up/hdmi_down never run concurrently.
  */
-#define POWER_PROP		"sys.xdplus.hdmi_power"
+#define POWER_PROP		"sys.xdplus.screen_power"
 #define SLEEP_PROP		"persist.sys.xdplus.hdmi_sleep"
 #define HDMICTL_PATH		"/system/bin/hdmictl"
 
