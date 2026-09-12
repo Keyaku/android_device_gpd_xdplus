@@ -7,25 +7,21 @@
     <string name="gpd_xdplus_summary" translatable="false">HDMI output, Vulkan shader cache, SELinux, crash dialogs</string>
     <string name="gpd_xdplus_cat_display" translatable="false">Display out</string>
 
-    <string name="xdplus_hdmi_up_title" translatable="false">Bring up HDMI mirror</string>
-    <string name="xdplus_hdmi_up_summary" translatable="false">Starts mirroring if plugging the cable in did not. Takes about 30 seconds, with the screen unlocked. If nothing appears, tear down and try once more.</string>
-    <string name="xdplus_hdmi_up_toast" translatable="false">Bringing up HDMI mirror… (~30s)</string>
-    <string name="xdplus_hdmi_down_title" translatable="false">Tear down HDMI</string>
-    <string name="xdplus_hdmi_down_summary" translatable="false">Stops HDMI output and returns to the built-in screen. Also the way out if either picture freezes, or if the built-in screen comes back wrong.</string>
-    <string name="xdplus_hdmi_down_toast" translatable="false">Tearing down HDMI…</string>
-
     <string name="xdplus_hdmi_res_title" translatable="false">HDMI resolution</string>
     <!-- %1$s is the chosen mode. The script reads the property when the mirror
          starts, so a change does not touch a running one. -->
     <string name="xdplus_hdmi_res_summary" translatable="false">%1$s — applies the next time the mirror starts</string>
+    <string name="xdplus_hdmi_sleep_title" translatable="false">Turn the monitor off after sleeping</string>
+    <!-- %1$s is the chosen delay. The daemon reads the property when the
+         device sleeps, so a change applies to the next sleep. -->
+    <string name="xdplus_hdmi_sleep_summary" translatable="false">%1$s — the monitor shows black while the device sleeps; after this delay the HDMI output is switched off and comes back on wake, which takes a few seconds</string>
     <string name="xdplus_hwc_vds_title" translatable="false">Record and cast through the display composer</string>
     <string name="xdplus_hwc_vds_summary" translatable="false">Experimental. Screen recording and casting skip the GPU, which is smoother and cheaper on battery, but closing the recorded app mid-recording can restart the display and drop the recording. Applied at the next boot.</string>
 
-    <!-- Non-selectable notes block at the top of the Display out page. Mirroring
-         and its audio ship, so this states the rough edges that remain instead
-         of calling the whole feature experimental. -->
+    <!-- Non-selectable notes block at the top of the Display out page: the
+         one caveat that still applies. -->
     <string name="xdplus_hdmi_notes_title" translatable="false">Before you start</string>
-    <string name="xdplus_hdmi_notes_summary" translatable="false">Mirroring works and carries sound. Plugging a monitor in usually starts it on its own; if nothing appears, use \"Bring up HDMI mirror\", and reboot if that fails twice. Two rough edges remain: opening an app after the console has sat idle can freeze both pictures, and an app that forces a portrait screen can leave the built-in one wrong. \"Tear down HDMI\" is the way out of both. Games also run less smoothly while a monitor is connected.</string>
+    <string name="xdplus_hdmi_notes_summary" translatable="false">If the monitor\'s picture ever freezes, unplug the cable and plug it back in. Games run a little less smoothly while a monitor is connected.</string>
 
     <string name="gpd_xdplus_cat_selinux" translatable="false">SELinux</string>
     <string name="gpd_xdplus_cat_selinux_summary" translatable="false">Enforcing mode, and exporting what it blocked</string>
@@ -123,6 +119,25 @@
         <item>11</item>
         <item>2</item>
         <item>0</item>
+    </string-array>
+
+    <!-- Minutes asleep before the daemon switches the HDMI output off; 0 keeps
+         it on (black). -->
+    <string-array name="xdplus_hdmi_sleep_entries" translatable="false">
+        <item>Never (stays black)</item>
+        <item>After 1 minute</item>
+        <item>After 2 minutes</item>
+        <item>After 5 minutes</item>
+        <item>After 10 minutes</item>
+        <item>After 15 minutes</item>
+    </string-array>
+    <string-array name="xdplus_hdmi_sleep_values" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>5</item>
+        <item>10</item>
+        <item>15</item>
     </string-array>
 
 </resources>

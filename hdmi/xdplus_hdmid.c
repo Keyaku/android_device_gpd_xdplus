@@ -30,6 +30,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <linux/netlink.h>
+#include <pthread.h>
+#include <sys/system_properties.h>
 
 #define LOG_TAG "xdplus_hdmid"
 #include <log/log.h>
@@ -45,6 +47,22 @@
 
 /* Coalesce a plug bounce into one action. */
 #define DEBOUNCE_MS		1000
+
+/* Sleep timeout: SurfaceFlinger publishes the external display's power state
+ * in POWER_PROP ("0" asleep, "1" awake). SLEEP_PROP holds the minutes asleep
+ * after which the HDMI output is switched off; 0 leaves it on, showing black.
+ * A torn-down output is rebuilt on wake through the same cable-event path as
+ * a replug: the timer thread only pokes hdmictl, and the resulting switch
+ * uevents drive the main loop, so hdmi_up/hdmi_down never run concurrently.
+ */
+#define POWER_PROP		"sys.xdplus.hdmi_power"
+#define SLEEP_PROP		"persist.sys.xdplus.hdmi_sleep"
+#define HDMICTL_PATH		"/system/bin/hdmictl"
+
+/* Serialises the dispatcher runs of the main loop against the timer thread. */
+static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+/* Set while the timer, not the cable, took the output down. Under g_lock. */
+static int g_timer_torn;
 
 static int read_hdmi_state(void)
 {
@@ -68,6 +86,95 @@ static int read_hdmi_state(void)
  * queue in the socket buffer meanwhile and are resolved by the sysfs re-read
  * on the next pass, so blocking here cannot lose a transition.
  */
+static int run_child(const char *path, const char *arg0, const char *arg1)
+{
+	pid_t pid;
+	int status = 0;
+
+	pid = fork();
+	if (pid < 0) {
+		ALOGE("fork failed: %s", strerror(errno));
+		return -1;
+	}
+	if (pid == 0) {
+		execl(path, path, arg0, arg1, (char *)NULL);
+		ALOGE("execl %s failed: %s", path, strerror(errno));
+		_exit(127);
+	}
+	if (TEMP_FAILURE_RETRY(waitpid(pid, &status, 0)) < 0) {
+		ALOGE("waitpid failed: %s", strerror(errno));
+		return -1;
+	}
+	return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+static int prop_int(const char *name)
+{
+	char v[PROP_VALUE_MAX];
+
+	if (__system_property_get(name, v) <= 0)
+		return -1;
+	return atoi(v);
+}
+
+/* Timer thread: sleeps on the power property, never polls. */
+static void *sleep_timer(void *unused)
+{
+	const prop_info *pi = NULL;
+	uint32_t serial = 0;
+
+	(void)unused;
+	for (;;) {
+		int power, mins;
+
+		if (pi == NULL) {
+			/* The property does not exist until SurfaceFlinger first
+			 * sets it; wait on the global serial until it does.
+			 */
+			pi = __system_property_find(POWER_PROP);
+			if (pi == NULL) {
+				__system_property_wait(NULL, serial, &serial, NULL);
+				continue;
+			}
+			serial = 0;
+		}
+
+		power = prop_int(POWER_PROP);
+		if (power == 0) {
+			mins = prop_int(SLEEP_PROP);
+			if (mins > 0) {
+				struct timespec to = { .tv_sec = mins * 60, .tv_nsec = 0 };
+				uint32_t next = serial;
+
+				if (__system_property_wait(pi, serial, &next, &to)) {
+					serial = next;	/* changed before the timeout */
+					continue;
+				}
+				pthread_mutex_lock(&g_lock);
+				if (prop_int(POWER_PROP) == 0 &&
+				    read_hdmi_state() == HDMI_ACTIVE) {
+					ALOGI("asleep %d min with HDMI up: switching the output off", mins);
+					run_child(HDMICTL_PATH, "disable", NULL);
+					g_timer_torn = 1;
+				}
+				pthread_mutex_unlock(&g_lock);
+			}
+		} else if (power == 1) {
+			pthread_mutex_lock(&g_lock);
+			if (g_timer_torn) {
+				ALOGI("awake: switching the HDMI output back on");
+				g_timer_torn = 0;
+				run_child(HDMICTL_PATH, "power", "1");
+				run_child(HDMICTL_PATH, "enable", NULL);
+			}
+			pthread_mutex_unlock(&g_lock);
+		}
+
+		__system_property_wait(pi, serial, &serial, NULL);
+	}
+	return NULL;
+}
+
 static void run_tweaks(const char *action)
 {
 	pid_t pid;
@@ -75,9 +182,11 @@ static void run_tweaks(const char *action)
 
 	ALOGI("HDMI %s: running %s %s", action, TWEAKS_PATH, action);
 
+	pthread_mutex_lock(&g_lock);
 	pid = fork();
 	if (pid < 0) {
 		ALOGE("fork failed: %s", strerror(errno));
+		pthread_mutex_unlock(&g_lock);
 		return;
 	}
 
@@ -96,6 +205,7 @@ static void run_tweaks(const char *action)
 		ALOGE("waitpid failed: %s", strerror(errno));
 	else if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
 		ALOGW("%s exited %d", action, WEXITSTATUS(status));
+	pthread_mutex_unlock(&g_lock);
 }
 
 /* True if this uevent belongs to the hdmi switch. The buffer is a run of
@@ -168,6 +278,14 @@ int main(void)
 	/* Act on the state the device is already in. init starts this after
 	 * boot_completed, so a cable present at boot still gets a mirror.
 	 */
+	{
+		pthread_t t;
+		if (pthread_create(&t, NULL, sleep_timer, NULL) == 0)
+			pthread_detach(t);
+		else
+			ALOGE("sleep timer thread: %s", strerror(errno));
+	}
+
 	last_state = read_hdmi_state();
 	ALOGI("started, hdmi switch state=%d", last_state);
 	if (last_state == HDMI_ACTIVE)

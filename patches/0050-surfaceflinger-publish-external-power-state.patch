@@ -1,0 +1,34 @@
+From 3bc5d0e580c3d9b958e68bbb9635eac61bb96fc5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sat, 12 Sep 2026 23:33:24 +0100
+Subject: [PATCH] SurfaceFlinger: publish the external display's power state
+
+The HDMI daemon has no event-driven signal for "the device went to sleep with a monitor attached": nothing in the framework flips a property on sleep, and polling costs wakeups for the whole uptime. setPowerModeInternal is the one place that sees every power change on the external, so it publishes it as sys.xdplus.hdmi_power (0 asleep, 1 awake). The daemon sleeps on that property and switches the HDMI output off after a user-set timeout, back on at wake.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Change-Id: I8bedfc764bdd22746fbe0fce806abe797b8c622b
+---
+ services/surfaceflinger/SurfaceFlinger.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/services/surfaceflinger/SurfaceFlinger.cpp b/services/surfaceflinger/SurfaceFlinger.cpp
+index 50115b3543..49a97dfe63 100644
+--- a/services/surfaceflinger/SurfaceFlinger.cpp
++++ b/services/surfaceflinger/SurfaceFlinger.cpp
+@@ -4373,6 +4373,12 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
+         mScheduler->setDisplayPowerState(mode == hal::PowerMode::ON);
+     }
+ 
++    // The only event-driven signal the HDMI daemon has for a sleep timeout:
++    // it tears the external down after the timeout and rebuilds it on wake.
++    if (!display->isPrimary()) {
++        property_set("sys.xdplus.hdmi_power", mode == hal::PowerMode::OFF ? "0" : "1");
++    }
++
+     ALOGD("Finished setting power mode %d on display %s", mode, to_string(*displayId).c_str());
+ }
+ 
+-- 
+2.55.0
+
