@@ -1,0 +1,49 @@
+From a0a819d4219dbf76a6c6ccc0dc4fd9b277db0e7f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 13 Sep 2026 19:12:32 +0100
+Subject: [PATCH] SurfaceFlinger: only keep an external off client composition
+ while the HAL mirrors
+
+Being on layer stack 0 is not the same as being mirrored. A 4K/ultra external
+runs direct-link, needs its own client composition, and was getting none --
+which is why the runtime `persist.sys.xdplus.mirror_no_client=0` override had to
+be set by hand on that path.
+
+The composer now publishes `sys.xdplus.hwc_mirroring`, carrying only the mirror
+refusals that do not depend on this display's own composition. The refusals that
+do read SurfaceFlinger's output are deliberately left out: feeding those back
+into this decision would oscillate.
+
+Changes:
+- `Display.cpp`: gate `isMirroringExternal()` on `sys.xdplus.hwc_mirroring`, read live so it follows a hotplug or a mode change
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Change-Id: Id8a00e0500c9868da709aa4cdb800be698785ffb
+---
+ .../surfaceflinger/CompositionEngine/src/Display.cpp   | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/services/surfaceflinger/CompositionEngine/src/Display.cpp b/services/surfaceflinger/CompositionEngine/src/Display.cpp
+index da6dbaa830..dfe9558795 100644
+--- a/services/surfaceflinger/CompositionEngine/src/Display.cpp
++++ b/services/surfaceflinger/CompositionEngine/src/Display.cpp
+@@ -302,7 +302,15 @@ bool Display::isMirroringExternal() const {
+     }
+     static const bool enabled =
+             property_get_bool("persist.sys.xdplus.mirror_no_client", true);
+-    return enabled;
++    if (!enabled) {
++        return false;
++    }
++    // Being on layer stack 0 is not the same as being mirrored: a 4K/ultra
++    // external runs direct-link and needs its own client composition. The
++    // composer publishes whether it will mirror at all; only its decisions
++    // that do not depend on this display's composition are in there.
++    // Read live -- it changes on hotplug and on a mode change.
++    return property_get_bool("sys.xdplus.hwc_mirroring", true);
+ }
+ 
+ bool Display::getSkipColorTransform() const {
+-- 
+2.55.0
+
