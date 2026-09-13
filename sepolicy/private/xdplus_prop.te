@@ -15,6 +15,10 @@ get_prop(surfaceflinger, xdplus_prop)
 set_prop(surfaceflinger, xdplus_prop)
 get_prop(toolbox, xdplus_prop)
 
+# The reconstructed composer publishes sys.xdplus.hwc_mirroring, which is how
+# SurfaceFlinger tells a mirroring external from a direct-link one.
+set_prop(hal_graphics_composer_server, xdplus_prop)
+
 # vkshim is loaded inside every app process that uses Vulkan, and reads its own
 # switches (persist.sys.xdplus.vkcachemax and friends) from there -- MEASURED as
 # an untrusted_app denial during a PPSSPP run under enforcing. Read-only: apps

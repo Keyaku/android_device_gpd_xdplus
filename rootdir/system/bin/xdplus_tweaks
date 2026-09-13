@@ -70,6 +70,26 @@ wait_for() {
 # A mode set on a registered external tears it down and registers it again
 # about 0.3 s later; judging before the teardown reads the old display as the
 # new one, and the fallback then walks past a mode that would have come up.
+# Does the sink's EDID claim this ultra mode? sink4k2k= is the kernel's parsed
+# 4K VIC mask (SINK_2160P_* bits). An empty or absent field means a kernel too
+# old to publish it: answer yes and leave the old behaviour alone.
+sink_supports_mode() {
+	_bit=""
+	case "$1" in
+	19) _bit=1 ;;    # 2160p23.976
+	20) _bit=2 ;;    # 2160p24
+	21) _bit=4 ;;    # 2160p25
+	22) _bit=8 ;;    # 2160p29.97
+	23) _bit=16 ;;   # 2160p30
+	24) _bit=32 ;;   # 4096x2160p24
+	25) _bit=512 ;;  # 2160p60
+	*) return 0 ;;
+	esac
+	_mask="$(sed -n 's/.*sink4k2k=0x\([0-9a-fA-F]*\).*/\1/p' /d/hdmi_pwrpin 2>/dev/null | head -1)"
+	[ -z "$_mask" ] && return 0
+	[ $(( 0x$_mask & _bit )) -ne 0 ]
+}
+
 hdmi_set_res() {
 	_had1="$(dumpsys SurfaceFlinger 2>/dev/null | grep -c 'DisplayDevice{1')"
 	$CTL res "$1"
@@ -128,6 +148,23 @@ hdmi_apply_mode() {
 		if [ "$SMODE" = 4 ]; then
 			xlog "HDMI mirror up (DECOUPLE_MIRROR, res=$_mode)"
 			return 0
+		fi
+		# Ultra modes (19..25 = 3840x2160 and 4096x2160) are above the
+		# composer's MDP mirror limit, so the composer takes DIRECT_LINK (1)
+		# by design and session mode 4 never arrives. Refusing that walks a
+		# working 4K sink down to 1080p.
+		#
+		# ⚠️ A sink that cannot do the mode ALSO lands on session mode 1,
+		# registered and blank, so accepting mode 1 on its own hands the user
+		# a black screen. The sink's own EDID 4K VIC mask is the only thing
+		# that separates the two; sink_supports_mode reads it.
+		if [ "$SMODE" = 1 ] && [ "$_mode" -ge 19 ]; then
+			if sink_supports_mode "$_mode"; then
+				xlog "HDMI up (DIRECT_LINK, ultra res=$_mode)"
+				return 0
+			fi
+			xlog "attempt $try: res $_mode is ultra but the sink's EDID does not claim it — falling back"
+			return 1
 		fi
 		if [ -z "$SMODE" ]; then
 			# Kernel too old to publish session_mode, or the node did not
