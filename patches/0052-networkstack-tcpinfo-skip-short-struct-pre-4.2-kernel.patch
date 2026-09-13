@@ -1,0 +1,63 @@
+From 85989c007d6e1ba13ceff3c9d179815ea7b3900c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 00:29:12 +0100
+Subject: [PATCH] TcpInfo: skip a short tcp_info instead of desynchronising the
+ caller
+
+TcpInfo's constructor rejects a tcp_info shorter than it needs and throws before
+reaching the line that advances the buffer past the attribute. parse() catches
+that and returns null, but the position is still inside the tcp_info payload, so
+TcpSocketTracker.parseSockInfo() reads the next rtattr header out of that payload
+-- garbage lengths, then a BufferUnderflowException, then a Log.wtf carrying the
+whole ~60 KB buffer as base64 into dropbox. On this device that is every socket
+on every poll: one WTF every ~20 seconds, indefinitely.
+
+The trigger is the kernel. tcpi_segs_in and tcpi_segs_out were added in Linux
+4.2; this port runs 3.18, whose struct tcp_info ends at tcpi_max_pacing_rate, so
+the length guard can never pass. Nothing turns the feature off either --
+Dependencies.isTcpInfoParsingSupported() is a bare API-level test.
+
+Advance the buffer in a finally so a short tcp_info is skipped cleanly. The
+success path is unchanged: the constructor already leaves the position there.
+tcpInfo stays null on this kernel, which is unavoidable, but INET_DIAG_MARK and
+the socket accounting keep working and the attribute loop stays in step.
+
+XDPLUS-DROP-WHEN: kernel >= 4.2, where tcpi_segs_in exists and the guard passes,
+making this patch inert. Also drop it if AOSP fixes this upstream -- as of
+2026-09-14 platform/packages/modules/NetworkStack main still throws before
+advancing, with no finally, so there is nothing to cherry-pick.
+
+Changes:
+- Advance past the attribute in `TcpInfo.parse()` whether or not the constructor threw
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Change-Id: I1d872a238f304c8784321ecc2ce03da530a9fa82
+---
+ src/com/android/networkstack/netlink/TcpInfo.java | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/com/android/networkstack/netlink/TcpInfo.java b/src/com/android/networkstack/netlink/TcpInfo.java
+index 31a408f..924c44e 100644
+--- a/src/com/android/networkstack/netlink/TcpInfo.java
++++ b/src/com/android/networkstack/netlink/TcpInfo.java
+@@ -139,12 +139,17 @@ public class TcpInfo {
+     /** Parse a TcpInfo from a giving ByteBuffer with a specific length. */
+     @Nullable
+     public static TcpInfo parse(@NonNull ByteBuffer bytes, int infolen) {
++        final int start = bytes.position();
+         try {
+             return new TcpInfo(bytes, infolen);
+         } catch (BufferUnderflowException | BufferOverflowException | IllegalArgumentException
+                 | IndexOutOfBoundsException e) {
+             Log.e(TAG, "parsing error.", e);
+             return null;
++        } finally {
++            // The constructor can throw before it skips the attribute, which would leave
++            // the caller's attribute loop reading the next header out of this payload.
++            bytes.position(Math.min(infolen + start, bytes.limit()));
+         }
+     }
+ 
+-- 
+2.55.0
+
