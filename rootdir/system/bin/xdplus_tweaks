@@ -67,12 +67,23 @@ wait_for() {
 
 # Bring the external up at one mode and judge the result. Split out of hdmi_up
 # so the fallback below can run the whole sequence again at another mode.
+# A mode set on a registered external tears it down and registers it again
+# about 0.3 s later; judging before the teardown reads the old display as the
+# new one, and the fallback then walks past a mode that would have come up.
+hdmi_set_res() {
+	_had1="$(dumpsys SurfaceFlinger 2>/dev/null | grep -c 'DisplayDevice{1')"
+	$CTL res "$1"
+	[ "$_had1" != 0 ] && wait_for 10 '! dumpsys SurfaceFlinger 2>/dev/null | grep -q "DisplayDevice{1"'
+	wait_for "$2" 'dumpsys SurfaceFlinger 2>/dev/null | grep -q "DisplayDevice{1"'
+}
+
 hdmi_apply_mode() {
 	_mode="$1"
-	$CTL res "$_mode"
-	wait_for 6 'dumpsys SurfaceFlinger 2>/dev/null | grep -q "DisplayDevice{1"'
+	hdmi_set_res "$_mode" 6
 
 	for try in 1 2 3; do
+		# DisplayManager registers the screen a beat after SurfaceFlinger.
+		wait_for 5 '[ "$(dumpsys display 2>/dev/null | grep -c "HDMI Screen")" != 0 ]'
 		if [ "$(dumpsys display | grep -c 'HDMI Screen')" = 0 ]; then
 			# This res 11 -> res N toggle, and the retry loop around it, are a
 			# workaround for a bringup that is not reliable -- nobody has found
@@ -89,8 +100,7 @@ hdmi_apply_mode() {
 			echo fakecablein:disable > $H
 			$CTL res "$ALT"
 			wait_for 3 '[ "$(cat /sys/class/switch/res_hdmi/state 2>/dev/null)" = "$((ALT + 1))" ]'
-			$CTL res "$_mode"
-			wait_for 5 'dumpsys SurfaceFlinger 2>/dev/null | grep -q "DisplayDevice{1"'
+			hdmi_set_res "$_mode" 5
 		fi
 
 		if [ "$(dumpsys SurfaceFlinger | grep -c 'DisplayDevice{1')" = 0 ]; then
