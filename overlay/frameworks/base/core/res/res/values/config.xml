@@ -304,9 +304,12 @@
          format is UMTS|LTE|... -->
     <string translatable="false" name="config_radio_access_family">GSM|WCDMA</string>
 
-    <!-- Clamshell: let the lockscreen rotate. Allowed auto-rotate angles come
-         from the LOS per-user setting accelerometer_rotation_angles (7 =
-         0/90/180; seascape excluded per user preference). -->
+    <!-- Clamshell: let the lockscreen rotate. The auto-rotate angle mask is the
+         per-user setting accelerometer_rotation_angles, and it is deliberately
+         left UNSET: unset means AOSP's 1|2|8, which on this panel is landscape
+         plus both portraits with seascape blocked, which is what we want.
+         The mask is bit-per-Surface.ROTATION_*, not per angle name, and on this
+         panel ROTATION_180 is seascape while ROTATION_270 is portrait. -->
     <bool name="config_enableLockScreenRotation">true</bool>
 
     <!-- Battery saver CPU caps. Only cpufreq-i/cpufreq-n are read from this
