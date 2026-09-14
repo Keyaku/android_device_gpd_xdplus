@@ -1,6 +1,7 @@
 /*
- * GPD XD+ → Display output: the mini-HDMI knobs. Each property is documented
- * at its use site in the HDMI bring-up script and the HDMI daemon.
+ * GPD XD+ → Display: the mini-HDMI knobs under Display out, and screen
+ * behaviour under Screen. Each property is documented at its use site in the
+ * HDMI bring-up script and the HDMI daemon.
  */
 
 package org.lineageos.settings.xdplus;

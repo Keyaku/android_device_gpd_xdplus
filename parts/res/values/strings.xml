@@ -5,7 +5,9 @@
 
     <string name="gpd_xdplus_title" translatable="false">GPD XD+</string>
     <string name="gpd_xdplus_summary" translatable="false">HDMI output, Vulkan shader cache, SELinux, crash dialogs</string>
-    <string name="gpd_xdplus_cat_display" translatable="false">Display out</string>
+    <string name="gpd_xdplus_cat_display" translatable="false">Display</string>
+    <string name="gpd_xdplus_group_display_out" translatable="false">Display out</string>
+    <string name="gpd_xdplus_group_screen" translatable="false">Screen</string>
 
     <string name="xdplus_hdmi_res_title" translatable="false">HDMI resolution</string>
     <string name="xdplus_rotation_suggestions_title" translatable="false">Rotation suggestion button</string>
@@ -20,7 +22,7 @@
     <string name="xdplus_hwc_vds_title" translatable="false">Record and cast through the display composer</string>
     <string name="xdplus_hwc_vds_summary" translatable="false">Experimental. Screen recording and casting skip the GPU, which is smoother and cheaper on battery, but closing the recorded app mid-recording can restart the display and drop the recording. Applied at the next boot.</string>
 
-    <!-- Non-selectable notes block at the top of the Display out page: the
+    <!-- Non-selectable notes block at the top of the Display out group: the
          one caveat that still applies. -->
     <string name="xdplus_hdmi_notes_title" translatable="false">Before you start</string>
     <string name="xdplus_hdmi_notes_summary" translatable="false">If the monitor\'s picture ever freezes, unplug the cable and plug it back in. Games run a little less smoothly while a monitor is connected.</string>
@@ -74,7 +76,7 @@
 
     <!-- Landing-page summaries: say what is behind each entry, since the page
          is now three doors rather than three headings. -->
-    <string name="gpd_xdplus_cat_display_summary" translatable="false">mini-HDMI output: start and stop, resolution, behaviour in fullscreen apps</string>
+    <string name="gpd_xdplus_cat_display_summary" translatable="false">mini-HDMI output, and screen rotation behaviour</string>
     <string name="gpd_xdplus_cat_shadercache_summary" translatable="false">Storage used by compiled game shaders, and how much to allow</string>
 
     <string name="gpd_xdplus_cat_shadercache" translatable="false">Vulkan shader cache</string>
