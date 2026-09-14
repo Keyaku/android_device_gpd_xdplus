@@ -1,0 +1,42 @@
+From f6eb825d6b517100c0fa094d5f0caa55fa7face8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 18:43:13 +0100
+Subject: [PATCH] Default the rotation-suggestion button to off
+
+AOSP defaults Settings.Secure.show_rotation_suggestions to enabled, and no
+Settings UI anywhere exposes it. On a landscape handheld with a small screen
+the suggestion button is a net negative, so the ROM default is flipped. An
+explicit user setting still wins, and a factory reset returns to this default
+rather than to AOSP.
+
+Changes:
+- Read SHOW_ROTATION_SUGGESTIONS with SHOW_ROTATION_SUGGESTIONS_DISABLED as the fallback in DisplayRotation, the single call site that drives the behaviour
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+Change-Id: I058abaacc5d321ff12166b998662f851fd2d7cb2
+---
+ .../core/java/com/android/server/wm/DisplayRotation.java    | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/services/core/java/com/android/server/wm/DisplayRotation.java b/services/core/java/com/android/server/wm/DisplayRotation.java
+index b581d49b..a07cb84d 100644
+--- a/services/core/java/com/android/server/wm/DisplayRotation.java
++++ b/services/core/java/com/android/server/wm/DisplayRotation.java
+@@ -1388,13 +1388,15 @@ public class DisplayRotation {
+         synchronized (mLock) {
+             boolean shouldUpdateOrientationListener = false;
+ 
+-            // Configure rotation suggestions.
++            // Configure rotation suggestions. The default is DISABLED rather than
++            // AOSP's ENABLED: this device is landscape with a small screen, where the
++            // suggestion button is a net negative. An explicit user setting still wins.
+             final int showRotationSuggestions =
+                     ActivityManager.isLowRamDeviceStatic()
+                             ? Settings.Secure.SHOW_ROTATION_SUGGESTIONS_DISABLED
+                             : Settings.Secure.getIntForUser(resolver,
+                             Settings.Secure.SHOW_ROTATION_SUGGESTIONS,
+-                            Settings.Secure.SHOW_ROTATION_SUGGESTIONS_DEFAULT,
++                            Settings.Secure.SHOW_ROTATION_SUGGESTIONS_DISABLED,
+                             UserHandle.USER_CURRENT);
+             if (mShowRotationSuggestions != showRotationSuggestions) {
+                 mShowRotationSuggestions = showRotationSuggestions;

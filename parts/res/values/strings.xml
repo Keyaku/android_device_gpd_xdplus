@@ -8,6 +8,8 @@
     <string name="gpd_xdplus_cat_display" translatable="false">Display out</string>
 
     <string name="xdplus_hdmi_res_title" translatable="false">HDMI resolution</string>
+    <string name="xdplus_rotation_suggestions_title" translatable="false">Rotation suggestion button</string>
+    <string name="xdplus_rotation_suggestions_summary" translatable="false">Show a button to rotate the screen when the device is turned with auto-rotate off. Off by default on this device.</string>
     <!-- %1$s is the chosen mode. The script reads the property when the mirror
          starts, so a change does not touch a running one. -->
     <string name="xdplus_hdmi_res_summary" translatable="false">%1$s — applies the next time the mirror starts</string>
