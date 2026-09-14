@@ -26,18 +26,13 @@
 # when it adds that write -- keeping it would abort the from-stock install.
 
 VENDOR_REV_PROP = "ro.vendor.xdplus.rev"
-# rev 8 adds the first SELinux-enforcing policy sweep (initcleanrom shell/toolbox
-# and sysfs access, sensors HAL input_device, composer debugfs_ged, plus the
-# platform-domain rules in device/gpd/xdplus/sepolicy).
-# rev 5 wires the SETSUSPENDMODE private ioctl through wpa_supplicant so the framework
-# can drive the MT6630 gen3 firmware into suspend-optimized power save on screen off.
-# rev 4 ships a wpa_supplicant built from our fork with SAE external-auth support and
-# enables the framework's WPA3 HIDL path; older system-side builds still run on the
-# new vendor, so previous revs stay accepted.
-# rev 3 patches the audio HAL's HDMI sink-format check, which is stubbed to always
-# refuse in the OEM blob and therefore kept AUX_DIGITAL from ever being opened.
-# rev 2 adds hwcomposer.xdplus.so and the ro.hardware.hwcomposer line that selects it.
-VENDOR_REV_ACCEPTED = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37")
+# The rev is the number of the release whose vendor image last differed from the
+# previous release's: R1 -> 1, R2 -> 2, R3 -> 3. A release that does not change
+# vendor keeps the previous number; development revs between releases bump freely
+# and only the cut freezes one. The pre-scheme running numbers (1-37) are no
+# longer accepted, so a device on one takes the vendor-writing package, which it
+# needs in any case.
+VENDOR_REV_ACCEPTED = ("3",)
 
 VENDOR_DEVICE = "/dev/block/platform/mtk-msdc.0/11230000.MSDC0/by-name/vendor"
 VENDOR_MOUNT = "/vendor"
