@@ -20,7 +20,8 @@
 # Explicit path: $(LOCAL_PATH) is not yet set this early.
 PRODUCT_COPY_FILES += \
     device/gpd/xdplus/rootdir/system/usr/keylayout/mtk-kpd.kl:system/usr/keylayout/mtk-kpd.kl \
-    device/gpd/xdplus/rootdir/system/usr/keylayout/Vendor_054c_Product_05c4.kl:system/usr/keylayout/Vendor_054c_Product_05c4.kl
+    device/gpd/xdplus/rootdir/system/usr/keylayout/Vendor_054c_Product_05c4.kl:system/usr/keylayout/Vendor_054c_Product_05c4.kl \
+    device/gpd/xdplus/rootdir/system/usr/idc/Vendor_054c_Product_05c4.idc:system/usr/idc/Vendor_054c_Product_05c4.idc
 
 $(call inherit-product, $(SRC_TARGET_DIR)/product/languages_full.mk)
 # SIM-less tablet: full_base (non-telephony) instead of full_base_telephony.

@@ -15,6 +15,7 @@ package org.lineageos.settings.xdplus;
 
 import android.os.SystemProperties;
 import android.preference.ListPreference;
+import android.provider.Settings;
 import android.preference.PreferenceFragment;
 import android.preference.SwitchPreference;
 import android.text.TextUtils;
@@ -36,6 +37,19 @@ public abstract class XdPlusFragmentBase extends PreferenceFragment {
         pref.setChecked(getBoolProp(prop, def));
         pref.setOnPreferenceChangeListener((p, v) -> {
             SystemProperties.set(prop, ((Boolean) v) ? "1" : "0");
+            return true;
+        });
+        return pref;
+    }
+
+    /** Secure-setting toggle, for framework settings with no property behind them. */
+    protected SwitchPreference bindSecureSwitch(String key, String setting, boolean def) {
+        final SwitchPreference pref = (SwitchPreference) findPreference(key);
+        pref.setChecked(Settings.Secure.getInt(
+                getContext().getContentResolver(), setting, def ? 1 : 0) != 0);
+        pref.setOnPreferenceChangeListener((p, v) -> {
+            Settings.Secure.putInt(getContext().getContentResolver(), setting,
+                    ((Boolean) v) ? 1 : 0);
             return true;
         });
         return pref;

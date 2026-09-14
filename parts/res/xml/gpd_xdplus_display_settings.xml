@@ -34,4 +34,9 @@
         android:title="@string/xdplus_hwc_vds_title"
         android:summary="@string/xdplus_hwc_vds_summary" />
 
+    <SwitchPreference
+        android:key="xdplus_rotation_suggestions"
+        android:title="@string/xdplus_rotation_suggestions_title"
+        android:summary="@string/xdplus_rotation_suggestions_summary" />
+
 </PreferenceScreen>

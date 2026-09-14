@@ -1,9 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Landscape-native clamshell: home screen must rotate by default. -->
 <resources>
+    <!-- Trebuchet gates Home rotation on this being true, and its own default
+         is true only under values-sw600dp. This panel is sw480dp, so Home
+         could never rotate. The per-user toggle still overrides this. -->
     <bool name="allow_rotation">true</bool>
-
-    <!-- ThemePicker (com.android.wallpaper) is not installed. Empty means
-         startWallpaperPicker leaves the intent unpinned so it still resolves. -->
-    <string name="wallpaper_picker_package" translatable="false"></string>
 </resources>
