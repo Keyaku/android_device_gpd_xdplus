@@ -1,42 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- GPD XD+ → Display output. Toggles set sys.xdplus.*/persist.sys.xdplus.*
-     props; init.xdplus.rc dispatches the privileged work. -->
+<!-- GPD XD+ → Display. The Display out group's toggles set
+     sys.xdplus.*/persist.sys.xdplus. props and init.xdplus.rc dispatches the
+     privileged work; Screen holds framework settings with no property. -->
 <PreferenceScreen
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:key="gpd_xdplus_display_settings"
     android:title="@string/gpd_xdplus_cat_display">
 
-    <!-- Notes block, not a control: the one thing to know before touching
-         the entries below. -->
-    <Preference
-        android:key="xdplus_hdmi_notes"
-        android:title="@string/xdplus_hdmi_notes_title"
-        android:summary="@string/xdplus_hdmi_notes_summary"
-        android:selectable="false"
-        android:persistent="false" />
+    <PreferenceCategory
+        android:key="xdplus_group_display_out"
+        android:title="@string/gpd_xdplus_group_display_out">
 
-    <ListPreference
-        android:key="xdplus_hdmi_res"
-        android:title="@string/xdplus_hdmi_res_title"
-        android:entries="@array/xdplus_hdmi_res_entries"
-        android:entryValues="@array/xdplus_hdmi_res_values"
-        android:defaultValue="2" />
+        <!-- Notes block, not a control: the one thing to know before touching
+             the entries below. -->
+        <Preference
+            android:key="xdplus_hdmi_notes"
+            android:title="@string/xdplus_hdmi_notes_title"
+            android:summary="@string/xdplus_hdmi_notes_summary"
+            android:selectable="false"
+            android:persistent="false" />
 
-    <ListPreference
-        android:key="xdplus_hdmi_sleep"
-        android:title="@string/xdplus_hdmi_sleep_title"
-        android:entries="@array/xdplus_hdmi_sleep_entries"
-        android:entryValues="@array/xdplus_hdmi_sleep_values"
-        android:defaultValue="0" />
+        <ListPreference
+            android:key="xdplus_hdmi_res"
+            android:title="@string/xdplus_hdmi_res_title"
+            android:entries="@array/xdplus_hdmi_res_entries"
+            android:entryValues="@array/xdplus_hdmi_res_values"
+            android:defaultValue="11" />
 
-    <SwitchPreference
-        android:key="xdplus_hwc_vds"
-        android:title="@string/xdplus_hwc_vds_title"
-        android:summary="@string/xdplus_hwc_vds_summary" />
+        <ListPreference
+            android:key="xdplus_hdmi_sleep"
+            android:title="@string/xdplus_hdmi_sleep_title"
+            android:entries="@array/xdplus_hdmi_sleep_entries"
+            android:entryValues="@array/xdplus_hdmi_sleep_values"
+            android:defaultValue="0" />
 
-    <SwitchPreference
-        android:key="xdplus_rotation_suggestions"
-        android:title="@string/xdplus_rotation_suggestions_title"
-        android:summary="@string/xdplus_rotation_suggestions_summary" />
+        <SwitchPreference
+            android:key="xdplus_hwc_vds"
+            android:title="@string/xdplus_hwc_vds_title"
+            android:summary="@string/xdplus_hwc_vds_summary" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="xdplus_group_screen"
+        android:title="@string/gpd_xdplus_group_screen">
+
+        <SwitchPreference
+            android:key="xdplus_rotation_suggestions"
+            android:title="@string/xdplus_rotation_suggestions_title"
+            android:summary="@string/xdplus_rotation_suggestions_summary" />
+
+    </PreferenceCategory>
 
 </PreferenceScreen>
