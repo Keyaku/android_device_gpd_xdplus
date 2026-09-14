@@ -23,7 +23,7 @@ public class XdPlusDisplaySettings extends XdPlusFragmentBase {
         super.onCreate(savedInstanceState);
         addPreferencesFromResource(R.xml.gpd_xdplus_display_settings);
 
-        bindList(KEY_HDMI_RES, PROP_HDMI_RES, "2", R.string.xdplus_hdmi_res_summary);
+        bindList(KEY_HDMI_RES, PROP_HDMI_RES, "11", R.string.xdplus_hdmi_res_summary);
         bindList(KEY_HDMI_SLEEP, PROP_HDMI_SLEEP, "0", R.string.xdplus_hdmi_sleep_summary);
         bindSwitch(KEY_HWC_VDS, PROP_HWC_VDS);
     }

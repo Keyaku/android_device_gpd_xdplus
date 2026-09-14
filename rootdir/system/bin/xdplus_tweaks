@@ -180,7 +180,7 @@ hdmi_apply_mode() {
 }
 
 hdmi_up() {
-	_mode_want="$(getprop persist.sys.xdplus.hdmi_res)"; [ -z "$_mode_want" ] && _mode_want=2
+	_mode_want="$(getprop persist.sys.xdplus.hdmi_res)"; [ -z "$_mode_want" ] && _mode_want=11
 	if [ ! -x "$CTL" ]; then
 		xlog "hdmictl missing ($CTL) — image too old, stage it in /data/local/tmp"
 		return 1
