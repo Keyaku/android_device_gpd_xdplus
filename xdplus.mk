@@ -99,6 +99,11 @@ PRODUCT_COPY_FILES += \
      $(LOCAL_PATH)/configs/.ht120.mtc:system/etc/.tp/.ht120.mtc \
      $(LOCAL_PATH)/configs/thermal.off.conf:system/etc/.tp/thermal.off.conf
 	
+# Mesa is built only when BOARD_GPU_DRIVERS is passed in, which no release
+# build does; the namespace alone costs nothing and its Android.mk errors out
+# without it.
+PRODUCT_SOONG_NAMESPACES += external/mesa3d
+
 # VNDK apex — the prebuilt 8.1 vendor's passthrough HALs (keymaster, gralloc,
 # hwcomposer, ...) need it; without it keystore crashloops on missing
 # keymaster@3.0 and SurfaceFlinger never comes up (reference system ships it too).
