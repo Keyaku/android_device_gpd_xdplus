@@ -1,0 +1,20 @@
+// Legacy (pre-HIDL) primary audio HAL for the GPD XD+ on a mainline kernel.
+// Deliberately NOT in PRODUCT_PACKAGES: it is staged over the stock blob at
+// runtime, never shipped in the ROM image.
+cc_library_shared {
+	name: "audio.primary.xdplus",
+	relative_install_path: "hw",
+	proprietary: true,
+	srcs: ["audio_hw.c"],
+	header_libs: ["libhardware_headers"],
+	shared_libs: [
+		"liblog",
+		"libtinyalsa",
+	],
+	cflags: [
+		"-Wall",
+		"-Werror",
+		"-Wno-unused-parameter",
+	],
+	compile_multilib: "both",
+}
