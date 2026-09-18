@@ -1,0 +1,28 @@
+// Sensors HAL for the mainline 6.12 kernel: the msa311 accelerometer read
+// through IIO sysfs. Staged by the 6.12 harness only, never in PRODUCT_PACKAGES.
+cc_binary {
+    name: "android.hardware.sensors@2.1-service.xdplus-iio",
+    defaults: ["hidl_defaults"],
+    relative_install_path: "hw",
+    srcs: [
+        "SensorsV2_1.cpp",
+        "service.cpp",
+    ],
+    header_libs: ["android.hardware.sensors@2.X-shared-utils"],
+    shared_libs: [
+        "android.hardware.sensors@1.0",
+        "android.hardware.sensors@2.0",
+        "android.hardware.sensors@2.1",
+        "libbase",
+        "libcutils",
+        "libfmq",
+        "libhidlbase",
+        "liblog",
+        "libpower",
+        "libutils",
+    ],
+    static_libs: [
+        "android.hardware.sensors@1.0-convert",
+        "android.hardware.sensors@2.X-shared-impl",
+    ],
+}
