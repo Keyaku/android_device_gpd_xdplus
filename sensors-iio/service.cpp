@@ -64,7 +64,7 @@ class IioAccelSensor : public Sensor {
         mSensorInfo.version = 1;
         mSensorInfo.type = SensorType::ACCELEROMETER;
         mSensorInfo.typeAsString = "";
-        mSensorInfo.maxRange = 4 * kGravity;
+        mSensorInfo.maxRange = 2 * kGravity;
         mSensorInfo.resolution = kGravity / 1024;
         mSensorInfo.power = 0.1f;
         mSensorInfo.minDelay = 10 * 1000;
