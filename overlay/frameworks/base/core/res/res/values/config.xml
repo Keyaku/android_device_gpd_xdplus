@@ -317,4 +317,9 @@
          The cpu4 entries need the kernel's saved-policy-limit restore: a whole
          big cluster going offline otherwise rebuilds the policy uncapped. -->
     <string translatable="false" name="config_batterySaverDeviceSpecificConfig">cpufreq-i=0:1300000/4:1404000,cpufreq-n=0:1001000/4:1001000</string>
+
+    <!-- The MT6397 accdet driver reports the jack as an input device
+         (SW_HEADPHONE_INSERT/SW_MICROPHONE_INSERT); without this the
+         framework drops those events and never reroutes. -->
+    <bool name="config_useDevInputEventForAudioJack">true</bool>
 </resources>

@@ -1,0 +1,34 @@
+From d1860cd31a6c83cae8b3fc3aab6d5f8475d510a4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 20 Sep 2026 17:36:03 +0100
+Subject: SystemUI: survive a Bluetooth profile losing its active device
+
+`onActiveDeviceChanged` passes null when a profile no longer has an active device, which is exactly what happens when a wired headset takes over audio from Bluetooth. The debug log dereferenced it unguarded and took SystemUI down with an NPE. Unreachable on this device until wired-jack detection started working.
+
+Changes:
+- Null-guard the active-device address in the debug log, printing "none" when the profile has no active device.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Change-Id: I522f5d5a06317481d17f83dbddc55f9ac2480277
+---
+ .../systemui/statusbar/policy/BluetoothControllerImpl.java   | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/policy/BluetoothControllerImpl.java b/packages/SystemUI/src/com/android/systemui/statusbar/policy/BluetoothControllerImpl.java
+index eeadf4a4..d58341b4 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/policy/BluetoothControllerImpl.java
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/policy/BluetoothControllerImpl.java
+@@ -384,7 +384,10 @@ public class BluetoothControllerImpl implements BluetoothController, BluetoothCa
+     @Override
+     public void onActiveDeviceChanged(CachedBluetoothDevice activeDevice, int bluetoothProfile) {
+         if (DEBUG) {
+-            Log.d(TAG, "ActiveDeviceChanged=" + activeDevice.getAddress()
++            // activeDevice is null when the profile loses its active device,
++            // which a wired headset taking over audio does.
++            Log.d(TAG, "ActiveDeviceChanged="
++                    + (activeDevice == null ? "none" : activeDevice.getAddress())
+                     + " profileId=" + bluetoothProfile);
+         }
+         updateActive();
