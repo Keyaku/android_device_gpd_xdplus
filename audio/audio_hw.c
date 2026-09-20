@@ -66,6 +66,8 @@ struct xd_audio_device {
 	int in_route_refs;
 	/* Amp control the live output path is using, NULL when idle. */
 	const char *out_amp;
+	/* One PCM, so one output stream; a second would only ever get EBUSY. */
+	int out_streams;
 	bool mic_mute;
 	audio_mode_t mode;
 	int gain_index;
@@ -79,6 +81,8 @@ struct xd_stream_out {
 	struct pcm_config config;
 	bool standby;
 	bool routed;
+	/* Suppress a per-period open failure from filling the log. */
+	bool open_failed;
 	audio_channel_mask_t channel_mask;
 	audio_devices_t devices;
 	uint64_t frames_written;
@@ -358,8 +362,11 @@ static int out_open_pcm_locked(struct xd_stream_out *out)
 
 	pcm = pcm_open(XD_CARD, XD_PCM_DEVICE_OUT, PCM_OUT | PCM_MONOTONIC, &out->config);
 	if (!pcm || !pcm_is_ready(pcm)) {
-		ALOGE("pcm_open(card %d, dev %d, out) failed: %s", XD_CARD,
-		      XD_PCM_DEVICE_OUT, pcm ? pcm_get_error(pcm) : "no handle");
+		if (!out->open_failed)
+			ALOGE("pcm_open(card %d, dev %d, out) failed: %s", XD_CARD,
+			      XD_PCM_DEVICE_OUT,
+			      pcm ? pcm_get_error(pcm) : "no handle");
+		out->open_failed = true;
 		if (pcm)
 			pcm_close(pcm);
 		pthread_mutex_lock(&out->adev->lock);
@@ -370,6 +377,7 @@ static int out_open_pcm_locked(struct xd_stream_out *out)
 	}
 	out->pcm = pcm;
 	out->standby = false;
+	out->open_failed = false;
 	ALOGI("output PCM open: %u Hz, %u ch, period %u x %u", out->config.rate,
 	      out->config.channels, out->config.period_size, out->config.period_count);
 	return 0;
@@ -811,9 +819,28 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
 
 	*stream_out = NULL;
 
+	/*
+	 * The policy offers a fast mixPort as well as the primary one, but
+	 * both land on the same PCM. Refusing the second lets the policy fall
+	 * back instead of holding an output that can never open.
+	 */
+	pthread_mutex_lock(&adev->lock);
+	if (adev->out_streams > 0) {
+		pthread_mutex_unlock(&adev->lock);
+		ALOGI("refusing a second output stream (flags 0x%x); one PCM",
+		      flags);
+		return -ENOSYS;
+	}
+	adev->out_streams++;
+	pthread_mutex_unlock(&adev->lock);
+
 	out = (struct xd_stream_out *)calloc(1, sizeof(struct xd_stream_out));
-	if (!out)
+	if (!out) {
+		pthread_mutex_lock(&adev->lock);
+		adev->out_streams--;
+		pthread_mutex_unlock(&adev->lock);
 		return -ENOMEM;
+	}
 
 	out->stream.common.get_sample_rate = out_get_sample_rate;
 	out->stream.common.set_sample_rate = out_set_sample_rate;
@@ -861,12 +888,18 @@ static void adev_close_output_stream(struct audio_hw_device *dev,
 				     struct audio_stream_out *stream)
 {
 	struct xd_stream_out *out = (struct xd_stream_out *)stream;
+	struct xd_audio_device *adev = out->adev;
 
 	pthread_mutex_lock(&out->lock);
 	out_close_pcm_locked(out);
 	pthread_mutex_unlock(&out->lock);
 	pthread_mutex_destroy(&out->lock);
 	free(out);
+
+	pthread_mutex_lock(&adev->lock);
+	if (adev->out_streams > 0)
+		adev->out_streams--;
+	pthread_mutex_unlock(&adev->lock);
 }
 
 static size_t adev_get_input_buffer_size(const struct audio_hw_device *dev,

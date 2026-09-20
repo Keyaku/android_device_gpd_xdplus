@@ -1,0 +1,39 @@
+From b8f587ceaca7078069680efbf75c489de0d1e3bb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 20 Sep 2026 17:57:45 +0100
+Subject: SystemUI: do not build the StatusBar graph on the volume worker
+ thread
+
+A VOLUME_CHANGED broadcast arrives on VolumeDialogControllerImpl's own thread, and shouldShowUI resolved the lazy StatusBar from there. That constructs its whole Dagger graph on whichever thread asks, and NotifCollection's constructor asserts it is on the main thread, so SystemUI died during startup. A headset present at boot makes AudioService emit that broadcast early enough to hit it every time.
+
+Both branches of the expression already require FLAG_SHOW_UI and mShowVolumeDialog, so checking them first is behaviour-preserving and skips building the StatusBar only to discard its answer.
+
+This does not fix the underlying race: a volume change carrying FLAG_SHOW_UI before main-thread init would still reach it.
+
+Changes:
+- Return early from shouldShowUI when the volume dialog is disabled or FLAG_SHOW_UI is clear, before resolving the lazy StatusBar.
+
+Co-authored-by: Claude <noreply@anthropic.com>
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Change-Id: Ie8ab7914bc16aed5bfb167be3f156a8b747d3b22
+---
+ .../android/systemui/volume/VolumeDialogControllerImpl.java  | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/volume/VolumeDialogControllerImpl.java b/packages/SystemUI/src/com/android/systemui/volume/VolumeDialogControllerImpl.java
+index c128cdf8..b6772e45 100644
+--- a/packages/SystemUI/src/com/android/systemui/volume/VolumeDialogControllerImpl.java
++++ b/packages/SystemUI/src/com/android/systemui/volume/VolumeDialogControllerImpl.java
+@@ -465,6 +465,11 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
+     }
+ 
+     private boolean shouldShowUI(int flags) {
++        // Both branches below require these, and resolving the lazy StatusBar
++        // builds its graph on whichever thread asks, asserting main-thread.
++        if (!mShowVolumeDialog || (flags & AudioManager.FLAG_SHOW_UI) == 0) {
++            return false;
++        }
+         // if status bar isn't null, check if phone is in AOD, else check flags
+         // since we could be using a different status bar
+         return mStatusBarOptionalLazy.map(statusBarLazy -> {
