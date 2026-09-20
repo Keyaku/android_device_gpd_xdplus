@@ -1,0 +1,48 @@
+From 166cebe0e76d2f6d88cfc6d72483274c471372b6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 20 Sep 2026 19:28:16 +0100
+Subject: [PATCH] Resolve the ExternalStorageService before a public volume
+ mounts
+
+A visible public volume is mounted before the user is unlocked, but the
+ExternalStorageService component was only resolved from onUnlockUser. The
+mount callback therefore threw "Not ready to bind", vold treated the mount as
+failed, and the card was marked unmountable long enough to raise a "Problem
+with SD card" notification before a later retry mounted it cleanly.
+
+Resolving the component needs nothing but PackageManager, so do it on demand
+when it has not been resolved yet. A failure still leaves the component null
+and behaves exactly as before.
+
+Changes:
+- `getExternalStorageServiceComponentName` resolves the component lazily instead of returning null while a mount is waiting on it
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+Change-Id: I678a05f207290aa8a0fedea226781aaddb7145f9
+---
+ .../android/server/storage/StorageSessionController.java | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/services/core/java/com/android/server/storage/StorageSessionController.java b/services/core/java/com/android/server/storage/StorageSessionController.java
+index 0d059ae3..f7f1f747 100644
+--- a/services/core/java/com/android/server/storage/StorageSessionController.java
++++ b/services/core/java/com/android/server/storage/StorageSessionController.java
+@@ -324,6 +324,15 @@ public final class StorageSessionController {
+     /** Returns the {@link ExternalStorageService} component name. */
+     @Nullable
+     public ComponentName getExternalStorageServiceComponentName() {
++        // A visible public volume mounts before onUnlockUser resolves this, and
++        // failing the mount marks the card unmountable. Resolving needs only PM.
++        if (mExternalStorageServiceComponent == null) {
++            try {
++                initExternalStorageServiceComponent();
++            } catch (ExternalStorageServiceException e) {
++                Slog.w(TAG, "Could not resolve the ExternalStorageService yet", e);
++            }
++        }
+         return mExternalStorageServiceComponent;
+     }
+ 
+-- 
+2.55.0
+
