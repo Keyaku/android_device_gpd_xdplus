@@ -64,6 +64,8 @@ struct xd_audio_device {
 	struct mixer *mixer;
 	int out_route_refs;
 	int in_route_refs;
+	/* Amp control the live output path is using, NULL when idle. */
+	const char *out_amp;
 	bool mic_mute;
 	audio_mode_t mode;
 	int gain_index;
@@ -169,10 +171,31 @@ static int mixer_set_enum_index(struct mixer *mixer, const char *name, int index
 	return ret;
 }
 
+/*
+ * Speaker and headphones share the codec's headphone amp; only the speaker
+ * adds the external PA on the amp control's GPIO. The three controls are
+ * mutually exclusive in the codec, so exactly one is ever on.
+ */
+static const char *amp_ctl_for_devices(audio_devices_t devices)
+{
+	audio_devices_t out = devices & AUDIO_DEVICE_OUT_ALL;
+	bool headphone = (out & (AUDIO_DEVICE_OUT_WIRED_HEADSET |
+				 AUDIO_DEVICE_OUT_WIRED_HEADPHONE)) != 0;
+	bool speaker = (out & AUDIO_DEVICE_OUT_SPEAKER) != 0;
+
+	if (headphone && speaker)
+		return "Headset_Speaker_Amp_Switch";
+	if (headphone)
+		return "Audio_Amp_Switch";
+	return "Speaker_Amp_Switch";
+}
+
 /* Playback DAPM path. pcm_write errors out immediately if this is unset. */
-static int adev_route_out_enable(struct xd_audio_device *adev)
+static int adev_route_out_enable(struct xd_audio_device *adev,
+				 audio_devices_t devices)
 {
 	struct mixer *mixer;
+	const char *amp = amp_ctl_for_devices(devices);
 	int ret = 0;
 
 	mixer = adev_mixer_locked(adev);
@@ -182,17 +205,39 @@ static int adev_route_out_enable(struct xd_audio_device *adev)
 	if (adev->out_route_refs++ > 0)
 		return 0;
 
+	adev->out_amp = amp;
 	ret |= mixer_set_int(mixer, "O03 I05 Switch", 1);
 	ret |= mixer_set_int(mixer, "O04 I06 Switch", 1);
-	ret |= mixer_set_str(mixer, "Speaker_Amp_Switch", "On");
+	ret |= mixer_set_str(mixer, amp, "On");
 	ret |= mixer_set_enum_index(mixer, "Headset_PGAL_GAIN", adev->gain_index);
 	ret |= mixer_set_enum_index(mixer, "Headset_PGAR_GAIN", adev->gain_index);
 
 	if (ret != 0)
 		ALOGE("playback routing incomplete; audio may be silent");
 	else
-		ALOGI("playback routing enabled (gain index %d)", adev->gain_index);
+		ALOGI("playback routing enabled (%s, gain index %d)", amp,
+		      adev->gain_index);
 	return 0;
+}
+
+/* Move a live stream between the amps without stopping it. */
+static void adev_route_out_retarget(struct xd_audio_device *adev,
+				    audio_devices_t devices)
+{
+	const char *amp = amp_ctl_for_devices(devices);
+	struct mixer *mixer;
+
+	if (adev->out_route_refs <= 0 || adev->out_amp == amp)
+		return;
+
+	mixer = adev_mixer_locked(adev);
+	if (!mixer)
+		return;
+
+	mixer_set_str(mixer, adev->out_amp, "Off");
+	mixer_set_str(mixer, amp, "On");
+	adev->out_amp = amp;
+	ALOGI("playback re-routed to %s", amp);
 }
 
 static void adev_route_out_disable(struct xd_audio_device *adev)
@@ -209,7 +254,9 @@ static void adev_route_out_disable(struct xd_audio_device *adev)
 		return;
 
 	/* Leaving the amp on keeps the external power amplifier enabled. */
-	mixer_set_str(mixer, "Speaker_Amp_Switch", "Off");
+	mixer_set_str(mixer, adev->out_amp ? adev->out_amp : "Speaker_Amp_Switch",
+		      "Off");
+	adev->out_amp = NULL;
 	mixer_set_int(mixer, "O03 I05 Switch", 0);
 	mixer_set_int(mixer, "O04 I06 Switch", 0);
 	ALOGI("playback routing disabled");
@@ -305,7 +352,7 @@ static int out_open_pcm_locked(struct xd_stream_out *out)
 		return 0;
 
 	pthread_mutex_lock(&out->adev->lock);
-	adev_route_out_enable(out->adev);
+	adev_route_out_enable(out->adev, out->devices);
 	pthread_mutex_unlock(&out->adev->lock);
 	out->routed = true;
 
@@ -395,12 +442,21 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
 	struct xd_stream_out *out = (struct xd_stream_out *)stream;
 	const char *p = strstr(kvpairs ? kvpairs : "", AUDIO_PARAMETER_STREAM_ROUTING "=");
 
-	/* Only routing is honoured; there is one output path on this board. */
+	/* Only routing is honoured; it picks which amp carries the stream. */
 	if (p) {
 		int devices = atoi(p + strlen(AUDIO_PARAMETER_STREAM_ROUTING "="));
+		bool routed;
+
 		pthread_mutex_lock(&out->lock);
 		out->devices = (audio_devices_t)devices;
+		routed = out->routed;
 		pthread_mutex_unlock(&out->lock);
+
+		if (routed) {
+			pthread_mutex_lock(&out->adev->lock);
+			adev_route_out_retarget(out->adev, (audio_devices_t)devices);
+			pthread_mutex_unlock(&out->adev->lock);
+		}
 	}
 	return 0;
 }
