@@ -4,6 +4,8 @@
  * IIO device, polled through sysfs.
  *
  * vendor.xd612.accel.map remaps axes, e.g. "-y,x,z" (default "x,y,z").
+ * vendor.xd612.accel.cal carries the zero-g offsets and sensitivity of this
+ * unit's chip, "ox,oy,oz,gx,gy,gz" in raw LSB and gain (default "0,0,0,1,1,1").
  */
 #define LOG_TAG "xdplus-iio-sensors"
 
@@ -77,6 +79,7 @@ class IioAccelSensor : public Sensor {
         mDev = findIio("msa311");
         if (mDev.empty()) ALOGE("no msa311 IIO device");
         parseMap(android::base::GetProperty("vendor.xd612.accel.map", "x,y,z"));
+        parseCal(android::base::GetProperty("vendor.xd612.accel.cal", ""));
     }
 
   protected:
@@ -88,8 +91,12 @@ class IioAccelSensor : public Sensor {
             readNum(mDev + "/in_accel_y_raw", &raw[1]);
             readNum(mDev + "/in_accel_z_raw", &raw[2]);
         }
+        // Correct in chip axes, where the offsets and sensitivity were measured,
+        // then apply the board's axis map.
+        double cal[3];
+        for (int i = 0; i < 3; i++) cal[i] = (raw[i] - mOff[i]) * mGain[i] * scale;
         float v[3];
-        for (int i = 0; i < 3; i++) v[i] = mSign[i] * raw[mAxis[i]] * scale;
+        for (int i = 0; i < 3; i++) v[i] = mSign[i] * cal[mAxis[i]];
         payload.vec3.x = v[0];
         payload.vec3.y = v[1];
         payload.vec3.z = v[2];
@@ -112,9 +119,47 @@ class IioAccelSensor : public Sensor {
         }
     }
 
+    // An unparsable or partial value leaves the chip uncorrected rather than
+    // half-corrected; a zero gain would silence the axis entirely.
+    void parseCal(const std::string& cal) {
+        for (int i = 0; i < 3; i++) {
+            mOff[i] = 0;
+            mGain[i] = 1;
+        }
+        auto parts = android::base::Split(cal, ",");
+        if (parts.size() != 6) {
+            if (!cal.empty()) ALOGE("ignoring accel.cal \"%s\": want 6 fields", cal.c_str());
+            return;
+        }
+        double v[6];
+        for (int i = 0; i < 6; i++) {
+            char* end = nullptr;
+            std::string p = android::base::Trim(parts[i]);
+            v[i] = strtod(p.c_str(), &end);
+            if (end == p.c_str() || !std::isfinite(v[i])) {
+                ALOGE("ignoring accel.cal \"%s\": field %d", cal.c_str(), i);
+                return;
+            }
+        }
+        for (int i = 3; i < 6; i++) {
+            if (v[i] <= 0) {
+                ALOGE("ignoring accel.cal \"%s\": gain %d not positive", cal.c_str(), i - 3);
+                return;
+            }
+        }
+        for (int i = 0; i < 3; i++) {
+            mOff[i] = v[i];
+            mGain[i] = v[i + 3];
+        }
+        ALOGI("accel.cal off %.1f,%.1f,%.1f gain %.4f,%.4f,%.4f", mOff[0], mOff[1], mOff[2],
+              mGain[0], mGain[1], mGain[2]);
+    }
+
     std::string mDev;
     int mAxis[3];
     int mSign[3];
+    double mOff[3];
+    double mGain[3];
 };
 
 struct XdplusSensors : public SensorsV2_1 {
