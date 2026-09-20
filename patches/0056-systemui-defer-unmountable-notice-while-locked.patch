@@ -1,0 +1,60 @@
+From 35e988b51b9d0547a8ef2baa7e39141498fd5aae Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ant=C3=B3nio=20Sarmento?= <Keyaku@users.noreply.github.com>
+Date: Sun, 20 Sep 2026 19:43:31 +0100
+Subject: [PATCH] SystemUI: do not report a card unmountable while its user is
+ locked
+
+A visible public volume cannot mount before the user is unlocked, because the
+ExternalStorageService lives in MediaProvider and its data is credential
+encrypted. StorageManagerService schedules a reset and the volume mounts
+cleanly once the user is unlocked, but in between it sits in UNMOUNTABLE and
+SystemUI reports "Problem with <name> SD card" on the lock screen. The card is
+healthy throughout; fsck runs in the same second and reports it clean.
+
+Defer the notice while the mount user is still locked. A genuinely bad card is
+still reported, just after unlock, when the retry has failed for a real reason
+and the warning can be trusted.
+
+Changes:
+- `onVolumeUnmountable` returns null while the volume's mount user is locked
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+Change-Id: I90223df83fff663f19ba12294700d0374a22d1f2
+---
+ .../android/systemui/usb/StorageNotification.java   | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/usb/StorageNotification.java b/packages/SystemUI/src/com/android/systemui/usb/StorageNotification.java
+index 7b48dc05..743b895d 100644
+--- a/packages/SystemUI/src/com/android/systemui/usb/StorageNotification.java
++++ b/packages/SystemUI/src/com/android/systemui/usb/StorageNotification.java
+@@ -31,6 +31,7 @@ import android.os.Bundle;
+ import android.os.Handler;
+ import android.os.StrictMode;
+ import android.os.UserHandle;
++import android.os.UserManager;
+ import android.os.storage.DiskInfo;
+ import android.os.storage.StorageEventListener;
+ import android.os.storage.StorageManager;
+@@ -443,6 +444,18 @@ public class StorageNotification extends SystemUI {
+     }
+ 
+     private Notification onVolumeUnmountable(VolumeInfo vol) {
++        // A volume needing the ExternalStorageService cannot mount while its user
++        // is locked; StorageManagerService retries after unlock, so do not alarm yet.
++        final int mountUserId = vol.getMountUserId();
++        if (mountUserId >= 0) {
++            final UserManager um = mContext.getSystemService(UserManager.class);
++            if (um != null && !um.isUserUnlocked(UserHandle.of(mountUserId))) {
++                Log.d(TAG, "Deferring unmountable notice for " + vol
++                        + ": user " + mountUserId + " still locked");
++                return null;
++            }
++        }
++
+         final DiskInfo disk = vol.getDisk();
+         final CharSequence title = mContext.getString(
+                 R.string.ext_media_unmountable_notification_title, disk.getDescription());
+-- 
+2.55.0
+
