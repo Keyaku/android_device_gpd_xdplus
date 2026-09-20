@@ -48,6 +48,13 @@ static const uint32_t kInputRates[] = { 8000, 16000, 32000, 48000 };
  */
 #define GAIN_ENUM_COUNT		16
 #define GAIN_ENUM_MUTE		15
+/*
+ * AudioFlinger scales the primary output itself and never calls
+ * set_volume, so whatever sits here is the analog gain for every sound
+ * the device makes. Index 0 is +8 dB, the loudest the PGA offers; the
+ * vendor stack runs this speaker at -4 dB.
+ */
+#define GAIN_ENUM_DEFAULT	12
 static const int kGainIndexByStep[] = { 15, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 };
 #define GAIN_STEP_COUNT	((int)(sizeof(kGainIndexByStep) / sizeof(kGainIndexByStep[0])))
 
@@ -1038,7 +1045,7 @@ static int adev_open(const hw_module_t *module, const char *name, hw_device_t **
 		return -ENOMEM;
 
 	pthread_mutex_init(&adev->lock, NULL);
-	adev->gain_index = 0;
+	adev->gain_index = GAIN_ENUM_DEFAULT;
 	adev->mode = AUDIO_MODE_NORMAL;
 
 	adev->device.common.tag = HARDWARE_DEVICE_TAG;
